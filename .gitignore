@@ -1,0 +1,15 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# V8 snapshot / build artifacts
+*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs / runtime
+*.log

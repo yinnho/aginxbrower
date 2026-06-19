@@ -1,0 +1,77 @@
+[package]
+name = "aginxbrower"
+version = "0.1.0"
+edition = "2021"
+authors = ["OpenCarrier Team"]
+description = "Lightweight server-side browser engine (inlined Obscura) for fast scraping and JS click."
+
+[features]
+default = []
+# Stealth HTTP client with TLS/JA3 fingerprint spoofing via wreq (BoringSSL).
+# Disable for plain reqwest-only builds.
+stealth = ["dep:wreq", "dep:wreq-util"]
+
+[dependencies]
+# --- async runtime ---
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# --- web framework ---
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# --- serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+
+# --- tracing ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- http client (non-stealth path) ---
+reqwest = { version = "0.12", features = ["cookies", "gzip", "brotli", "deflate", "rustls-tls", "socks"], default-features = false }
+encoding_rs = "0.8"
+tempfile = "3"
+url = "2"
+
+# --- html / dom parsing ---
+html5ever = "0.29"
+markup5ever = "0.14"
+selectors = "0.26"
+servo_arc = "0.4"
+cssparser = "0.34"
+precomputed-hash = "0.1"
+scraper = "0.21"
+html2md = "0.2"
+
+# --- V8 / JS runtime (inlined obscura-js) ---
+deno_core = "0.350"
+deno_error = "0.6"
+base64 = "0.22"
+sha1 = "0.10"
+sha2 = "0.10"
+
+# --- stealth client (TLS fingerprint spoofing) ---
+# Pin exact versions: wreq/wreq-util are pre-release rc crates whose API shifts
+# between builds; a caret requirement could pull an incompatible rc and break.
+# prefix-symbols renames BoringSSL exports to avoid clashing with system OpenSSL,
+# but the renaming is only correct on Linux/Android (per wreq's README).
+wreq-util = { version = "=3.0.0-rc.10", optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+wreq = { version = "=6.0.0-rc.28", optional = true, features = ["prefix-symbols", "socks"] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "android")))'.dependencies]
+wreq = { version = "=6.0.0-rc.28", optional = true, features = ["socks"] }
+
+[build-dependencies]
+deno_core = "0.350"
+
+# Unwinding is REQUIRED: ops wrap their bodies in std::panic::catch_unwind so a
+# panic degrades to an error return instead of unwinding into V8's FFI frame and
+# aborting the process. panic="abort" turns every catchable op panic into a crash.
+[profile.release]
+panic = "unwind"
