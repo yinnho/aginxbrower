@@ -221,15 +221,15 @@ curl -s -X POST http://127.0.0.1:8089/eval -H 'Content-Type: application/json' -
 }'
 ```
 
-### 知乎专栏（需 cookie）
+### 知乎专栏（需 __zse_ck cookie）
 
-知乎用 `d_c0`（设备指纹）+ `__zse_ck`（验证 token）做风控，缺这两个 cookie 返回 403。**正文在初始 HTML 的 `<script id="js-initialData">` JSON 里（SSR），直接解析即可，不依赖 JS 渲染**，绕过 DOM 完整性问题。
+知乎专栏是公开内容（无需登录），但知乎要求带 `__zse_ck` cookie 才放行（否则 403）。**只需 `__zse_ck` 一个 cookie，不需要 d_c0 / 登录态 / 住宅代理**；同一个 `__zse_ck` 对所有专栏文章通用，有效期约一年。正文在初始 HTML 的 `<script id="js-initialData">` JSON 里（SSR），直接解析即可，不依赖 JS 渲染，绕过 DOM 完整性问题。
 
 ```bash
-./examples/zhihu.sh "<文章URL>" "<d_c0值>" "<__zse_ck值>"
+./examples/zhihu.sh "<文章URL>" "<__zse_ck值>"
 ```
 
-`d_c0` / `__zse_ck` 从浏览器导出：F12 → Application → Cookies → `.zhihu.com`。`d_c0` 长期有效；`__zse_ck` 是动态 token，几天后过期需重新导出。
+`__zse_ck` 获取（约一年一次）：浏览器打开任意知乎专栏 → F12 → Application → Cookies → `.zhihu.com` → 复制 `__zse_ck`。首次访问知乎会弹易盾验证码，人工过一次后 `__zse_ck` 长期有效。
 
 ## 已知限制
 
