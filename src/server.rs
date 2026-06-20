@@ -99,10 +99,20 @@ pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
                 OutputFormat::Markdown => html_to_markdown(&html, req.selector.as_deref())?,
             };
 
+            // Truncate to max_chars (0 = unlimited). Keeps huge pages from
+            // blowing up a downstream LLM context window.
+            let (content, truncated) = if req.max_chars > 0 && content.chars().count() > req.max_chars {
+                let cut: String = content.chars().take(req.max_chars).collect();
+                (cut, true)
+            } else {
+                (content, false)
+            };
+
             Ok(FetchResponse {
                 url: page.url(),
                 title,
                 content,
+                truncated,
             })
         })
     })

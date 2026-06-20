@@ -6,6 +6,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 mod browser;
 mod config;
@@ -22,7 +23,7 @@ mod obscura_browser;
 
 use server::{do_click, do_eval, do_fetch};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FetchRequest {
     pub url: String,
     #[serde(default)]
@@ -39,9 +40,17 @@ pub struct FetchRequest {
     /// that gate content behind a logged-in session (e.g. WeChat articles).
     #[serde(default)]
     pub cookies: Vec<String>,
+    /// Truncate `content` to at most this many characters. 0 = no limit.
+    /// Default 50000 — keeps responses from blowing up an LLM context window.
+    #[serde(default = "default_max_chars")]
+    pub max_chars: usize,
 }
 
-#[derive(Debug, Deserialize, Default)]
+fn default_max_chars() -> usize {
+    50_000
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     #[default]
@@ -78,11 +87,14 @@ pub struct EvalRequest {
     pub cookies: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct FetchResponse {
     pub url: String,
     pub title: Option<String>,
     pub content: String,
+    /// True when `content` was truncated to `max_chars`.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,8 +175,76 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 async fn fetch_handler(Json(req): Json<FetchRequest>) -> Result<impl IntoResponse, AppError> {
-    let resp = spawn_blocking(move || do_fetch(req)).await?;
-    Ok((StatusCode::OK, Json(resp?)))
+    // Short-lived in-process cache. Each /fetch spins up a fresh V8 browser
+    // (expensive), so repeated grabs of the same URL in one session benefit a
+    // lot. Keyed by everything that affects the result (url/format/selector/
+    // cookies/use_proxy/max_chars). TTL via AGINXBROWER_CACHE_TTL_SECS
+    // (default 600s; 0 disables).
+    let cache_key = fetch_cache_key(&req);
+    if let Some(cached) = fetch_cache_get(&cache_key) {
+        return Ok((StatusCode::OK, Json(cached)));
+    }
+
+    let resp = spawn_blocking(move || do_fetch(req)).await??;
+    fetch_cache_put(&cache_key, &resp);
+    Ok((StatusCode::OK, Json(resp)))
+}
+
+/// Cache key: the request fields that change the response. `wait_secs` is
+/// intentionally excluded (it only waits for rendering, same final content).
+fn fetch_cache_key(req: &FetchRequest) -> String {
+    format!(
+        "{}|{:?}|{:?}|{}|{:?}|{}",
+        req.url, req.format, req.selector, req.use_proxy, req.cookies, req.max_chars,
+    )
+}
+
+type FetchCache = std::sync::Mutex<HashMap<String, (u64, FetchResponse)>>;
+
+static FETCH_CACHE: std::sync::LazyLock<FetchCache> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(HashMap::new())
+});
+
+fn cache_ttl_secs() -> u64 {
+    std::env::var("AGINXBROWER_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(600)
+}
+
+fn fetch_cache_get(key: &str) -> Option<FetchResponse> {
+    let ttl = cache_ttl_secs();
+    if ttl == 0 {
+        return None;
+    }
+    let now = now_secs();
+    let cache = FETCH_CACHE.lock().ok()?;
+    let (ts, resp) = cache.get(key)?;
+    if now.saturating_sub(*ts) < ttl {
+        Some(resp.clone())
+    } else {
+        None
+    }
+}
+
+fn fetch_cache_put(key: &str, resp: &FetchResponse) {
+    if cache_ttl_secs() == 0 {
+        return;
+    }
+    if let Ok(mut cache) = FETCH_CACHE.lock() {
+        // Bound the cache to avoid unbounded growth across distinct URLs.
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key.to_string(), (now_secs(), resp.clone()));
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 async fn click_handler(Json(req): Json<ClickRequest>) -> Result<impl IntoResponse, AppError> {
