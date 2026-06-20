@@ -74,6 +74,43 @@ fn inject_cookies(browser: &Browser, cookies: &[String], target_url: &str) {
     }
 }
 
+/// Read the rendered text content from the live DOM (after JS has run).
+/// When `selector` is given, return that element's innerText; otherwise the
+/// whole body. This reflects JS-filled content (WeChat/SPA), unlike parsing
+/// the initial HTML snapshot.
+///
+/// Obscura's innerText does NOT exclude script/style text (unlike a real
+/// browser), so we blank those elements' textContent on the live DOM first.
+/// This mutates the page, but do_fetch discards it right after.
+fn rendered_text(page: &mut crate::page::Page, selector: Option<&str>) -> String {
+    let js = match selector {
+        Some(sel) => {
+            let escaped = sel.replace('\\', "\\\\").replace('`', "\\`").replace('$', "\\$");
+            format!(
+                "(function(){{var el=document.querySelector(`{escaped}`);if(!el)return'';el.querySelectorAll('script,style,noscript').forEach(function(e){{e.textContent=''}});return el.innerText;}})()"
+            )
+        }
+        None => {
+            "(function(){var b=document.body;if(!b)return '';b.querySelectorAll('script,style,noscript').forEach(function(e){e.textContent=''});return b.innerText;})()".to_string()
+        }
+    };
+    let raw = page.evaluate(&js).as_str().unwrap_or("").to_string();
+    // Collapse runs of whitespace (heavy SPA pages produce lots of blank
+    // lines from empty layout containers) — keeps the output tight.
+    collapse_whitespace(&raw)
+}
+
+/// Collapse runs of >=3 whitespace chars (spaces/tabs/newlines) into a single
+/// blank line, and trim each line. Keeps readable paragraph breaks without the
+/// hundreds of empty lines SPA layouts inject.
+fn collapse_whitespace(s: &str) -> String {
+    s.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Fetch a page and return content in the requested format.
 pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
     run_on_local_runtime(move |_rt| {
@@ -87,16 +124,30 @@ pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
                 page.settle(wait * 1000).await;
             }
 
-            let html = page.content();
+            // Title: prefer a visible article-title element (WeChat's
+            // #activity-name), then document.title, then og:title meta.
             let title = page
-                .evaluate("document.title")
+                .evaluate(
+                    "((document.querySelector('#activity-name,h1,.article-title')||{}).textContent||'').trim()\
+                     || document.title\
+                     || (document.querySelector('meta[property=\"og:title\"]')||{}).content\
+                     || ''",
+                )
                 .as_str()
+                .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
 
+            // Source the content from the RENDERED DOM, not the initial HTML
+            // snapshot. On heavy SPA pages (WeChat: 6.6MB shell) the article
+            // body is filled in by JS and sits deep in document.documentElement
+            // .outerHTML — converting the whole shell to markdown then
+            // truncating to max_chars would cut the body off entirely.
+            // body.innerText (after settle/wait) is the already-rendered text.
             let content = match req.format {
-                OutputFormat::Html => html,
-                OutputFormat::Text => extract_text(&html, req.selector.as_deref())?,
-                OutputFormat::Markdown => html_to_markdown(&html, req.selector.as_deref())?,
+                OutputFormat::Html => page.content(),
+                OutputFormat::Text | OutputFormat::Markdown => {
+                    rendered_text(&mut page, req.selector.as_deref())
+                }
             };
 
             // Truncate to max_chars (0 = unlimited). Keeps huge pages from
