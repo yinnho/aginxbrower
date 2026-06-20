@@ -230,8 +230,6 @@ export AGINXBROWER_URL=http://127.0.0.1:8089
 
 宿主侧零新增配置字段、Agent 侧零接口变化——AginxBrower 是一个环境变量挂上去的"浏览器外挂"。OpenCarrier 同时提供独立的 `browser_*` 工具集（`browser_navigate`/`browser_evaluate`/`browser_click`），给需要点击/滚动/执行 JS 的交互场景显式调用。
 
-## 已知限制
-
 ## 站点抓取示例
 
 `examples/` 下提供了针对不同风控类型站点的抓取脚本。
