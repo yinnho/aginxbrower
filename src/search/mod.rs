@@ -389,6 +389,12 @@ pub async fn stealth_fetch(
     // follows redirects internally; redirected_from holds the *source* URLs
     // and resp.url is the final destination.
     let final_url = resp.url.as_str();
+    tracing::info!(
+        "stealth_fetch: {} -> final={} redirects={:?} status={}",
+        url, final_url,
+        resp.redirected_from.iter().map(|u| u.as_str()).collect::<Vec<_>>(),
+        resp.status,
+    );
     if final_url.contains("/antispider")
         || final_url.contains("wappass.baidu.com")
         || final_url.contains("sorry.google.com")

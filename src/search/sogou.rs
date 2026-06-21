@@ -63,6 +63,12 @@ impl SearchEngine for SogouEngine {
             html = super::plain_fetch(&self.plain_client, &url).await?;
         }
 
+        // Check for CAPTCHA indicators in the HTML body.
+        if html.contains("/antispider") || html.contains("用户频率限制") {
+            tracing::warn!("sogou: CAPTCHA detected in HTML body (len={})", html.len());
+            return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+        }
+
         parse_sogou_html(&html)
     }
 }
