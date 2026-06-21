@@ -32,8 +32,8 @@ aginxbrowser/
     │   ├── mod.rs           #   SearchEngine trait、Registry、合并去重、CAPTCHA 暂停
     │   ├── baidu.rs         #   百度（JSON API，wreq stealth）
     │   ├── bing.rs          #   Bing（HTML 解析，plain reqwest）
-    │   ├── sogou.rs         #   搜狗通用（HTML 解析，wreq stealth）
-    │   ├── sogou_wechat.rs  #   搜狗微信（HTML 解析，wreq stealth 必须）
+    │   ├── sogou.rs         #   搜狗通用（HTML 解析，plain reqwest）
+    │   ├── sogou_wechat.rs  #   搜狗微信（HTML 解析，plain reqwest + /link 解析）
     │   └── google.rs        #   Google（HTML 解析，wreq stealth + proxy）
     │
     ├── obscura_dom/         # HTML 解析、DOM 树、CSS 选择器
@@ -250,13 +250,13 @@ EOF
 |------|------|------------|------|
 | Baidu | general | wreq stealth | 百度 JSON API，中国最常用 |
 | Bing | general | plain reqwest | Bing HTML 解析，稳定可靠 |
-| Sogou | general | wreq stealth | 搜狗通用搜索 |
-| Sogou WeChat | general | wreq stealth | 搜狗微信搜索，需 stealth 绕过 TLS 指纹检测 |
+| Sogou | general | plain reqwest | 搜狗通用搜索 |
+| Sogou WeChat | general, news | plain reqwest | 搜狗微信搜索，plain reqwest 搜索 + 解析 /link 跳转 |
 | Google | general | wreq stealth + proxy | Google HTML 解析，国内需代理 |
 
 - **合并去重**：多引擎返回的同一 URL（归一化后）合并为一条结果，`engines` 字段列出所有来源引擎，`score` 累加
 - **CAPTCHA 暂停**：引擎触发验证码后自动暂停（搜狗微信 60 分钟，其他 30 分钟），不影响其他引擎
-- **stealth 优势**：wreq 使用 BoringSSL 模拟 Chrome145 TLS 指纹，搜狗微信等基于 TLS 指纹的反爬检测无法识别
+- **stealth 优势**：wreq 使用 BoringSSL 模拟 Chrome145 TLS 指纹，绕过百度等基于 TLS 指纹的反爬检测；搜狗搜索不检测 TLS 指纹（plain reqwest 即可），但 `/link` 跳转需要同会话 cookie + Referer 才能解析到真实微信文章 URL
 
 示例（纯搜索，快）：
 
@@ -354,6 +354,15 @@ curl -s -X POST http://127.0.0.1:8089/eval -H 'Content-Type: application/json' -
   "script": "({title:document.querySelector(\"#activity-name\")?.textContent?.trim(), body:document.querySelector(\"#js_content\")?.innerText})"
 }'
 ```
+
+通过 `/search` 搜索微信文章并自动抓正文（一步完成"搜→读"）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8089/search -H 'Content-Type: application/json' \
+  -d '{"q":"AI人工智能","categories":"news","fetch_top":3,"max_chars_per":2000}'
+```
+
+> 搜狗微信引擎使用 plain reqwest 搜索 + 解析 `/link` 跳转 URL，获取真实 `mp.weixin.qq.com` 链接后由 obscura 浏览器（macOS UA）抓取正文。需设置 `AGINXBROWSER_UA` 为 macOS Chrome UA。
 
 ### 知乎专栏（需 __zse_ck cookie）
 
