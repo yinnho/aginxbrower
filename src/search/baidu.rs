@@ -118,6 +118,7 @@ fn parse_baidu_json(text: &str) -> Result<Vec<RawSearchResult>, SearchEngineErro
             snippet,
             engine: "baidu".to_string(),
             score: total - i as f64,
+            cookies: vec![],
         });
     }
 

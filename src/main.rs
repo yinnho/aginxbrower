@@ -158,6 +158,10 @@ pub struct SearchResultItem {
     pub content: Option<String>,
     pub content_truncated: bool,
     pub fetch_error: Option<String>,
+    /// Cookies needed to fetch this URL (e.g. sogou session for /link redirect).
+    /// Not serialized in API response — only used internally during fetch.
+    #[serde(skip)]
+    pub cookies: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

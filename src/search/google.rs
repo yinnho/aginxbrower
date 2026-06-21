@@ -150,6 +150,7 @@ fn parse_google_html(html: &str) -> Result<Vec<RawSearchResult>, SearchEngineErr
             snippet,
             engine: "google".to_string(),
             score: 0.0, // assigned below
+            cookies: vec![],
         });
     }
 
@@ -304,5 +305,6 @@ fn parse_google_result_fallback(item: &scraper::ElementRef) -> Option<RawSearchR
         snippet,
         engine: "google".to_string(),
         score: 0.0,
+        cookies: vec![],
     })
 }

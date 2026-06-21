@@ -65,6 +65,7 @@ fn inject_cookies(browser: &Browser, cookies: &[String], target_url: &str) {
     if cookies.is_empty() {
         return;
     }
+    tracing::debug!("inject_cookies: {} cookies for {}", cookies.len(), target_url);
     let store = browser.cookies();
     let base = match url::Url::parse(target_url) {
         Ok(u) => u,
@@ -128,15 +129,45 @@ fn fetch_url_text(
     wait_secs: u64,
     max_chars: usize,
 ) -> Result<(String, bool)> {
+    fetch_url_text_with_cookies(url, use_proxy, wait_secs, max_chars, &[])
+}
+
+/// Same as fetch_url_text but injects search-session cookies before navigation.
+/// Needed for sogou WeChat /link redirect URLs which require the sogou session
+/// cookie to pass the antispider check.
+fn fetch_url_text_with_cookies(
+    url: String,
+    use_proxy: bool,
+    wait_secs: u64,
+    max_chars: usize,
+    cookies: &[String],
+) -> Result<(String, bool)> {
+    let cookies = cookies.to_vec(); // Clone so the closure owns the data.
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
             let browser = build_browser(use_proxy)?;
+            if !cookies.is_empty() {
+                inject_cookies(&browser, &cookies, &url);
+            }
             let mut page = browser.new_page().await?;
             page.goto(&url).await?;
             if wait_secs > 0 {
                 page.settle(wait_secs * 1000).await;
             }
+
+            // Check if we landed on an antispider/CAPTCHA page.
+            let final_url = page.url();
+            tracing::info!("fetch_url_text: {} -> final_url={}", url, final_url);
+            let is_antispider = final_url.contains("/antispider")
+                || final_url.contains("wappass.baidu.com")
+                || final_url.contains("sorry.google.com");
             let content = rendered_text(&mut page, None);
+
+            // If we landed on an antispider/CAPTCHA page, treat it as an error
+            // rather than returning the CAPTCHA page content as search result body.
+            if is_antispider {
+                return Err(anyhow::anyhow!("CAPTCHA/antispider page detected at {}", final_url));
+            }
 
             let (content, truncated) = if max_chars > 0 && content.chars().count() > max_chars {
                 (content.chars().take(max_chars).collect::<String>(), true)
@@ -282,16 +313,22 @@ pub async fn do_search(req: SearchRequest) -> Result<SearchResponse, SearchError
     // Step 2: optionally grab body for the top fetch_top results (concurrent).
     // Each fetch runs in its own blocking thread + current-thread runtime
     // (V8 is !Send), so spawn_blocking gives natural isolation + concurrency.
+    // Cookies from the search session (e.g. sogou WeChat) are passed through
+    // so the obscura browser can authenticate redirect URLs.
     let n = req.fetch_top.min(items.len());
     if n > 0 {
         let mut handles = Vec::with_capacity(n);
         for i in 0..n {
             let url = items[i].url.clone();
+            let cookies = items[i].cookies.clone();
             let use_proxy = req.use_proxy;
             let wait = req.wait_secs;
             let max_chars = req.max_chars_per;
+            if !cookies.is_empty() {
+                tracing::debug!("do_search: item {} url={} has {} cookies", i, url, cookies.len());
+            }
             handles.push(tokio::task::spawn_blocking(move || {
-                (i, fetch_url_text(url, use_proxy, wait, max_chars))
+                (i, fetch_url_text_with_cookies(url, use_proxy, wait, max_chars, &cookies))
             }));
         }
         for h in handles {

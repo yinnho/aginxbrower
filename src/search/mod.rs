@@ -35,6 +35,9 @@ pub struct RawSearchResult {
     pub engine: String,
     /// Position-based score: N - position (0-indexed).
     pub score: f64,
+    /// Cookies needed to fetch this URL (e.g. sogou session cookies for
+    /// /link redirect URLs). Passed to the obscura browser during fetch.
+    pub cookies: Vec<String>,
 }
 
 /// Error from a single engine.
@@ -298,6 +301,7 @@ fn merge_results(results: Vec<RawSearchResult>, max_results: usize) -> Vec<Searc
             let mut best_title = String::new();
             let mut best_snippet = String::new();
             let mut best_url = String::new();
+            let mut cookies = Vec::new();
 
             for r in &group {
                 if !engines.contains(&r.engine) {
@@ -312,6 +316,10 @@ fn merge_results(results: Vec<RawSearchResult>, max_results: usize) -> Vec<Searc
                 if r.snippet.len() > best_snippet.len() {
                     best_snippet = r.snippet.clone();
                 }
+                // Take cookies from the first result that has them.
+                if cookies.is_empty() && !r.cookies.is_empty() {
+                    cookies = r.cookies.clone();
+                }
             }
 
             SearchResultItem {
@@ -323,6 +331,7 @@ fn merge_results(results: Vec<RawSearchResult>, max_results: usize) -> Vec<Searc
                 content: None,
                 content_truncated: false,
                 fetch_error: None,
+                cookies,
             }
         })
         .collect();

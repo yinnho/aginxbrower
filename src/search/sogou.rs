@@ -143,6 +143,7 @@ fn parse_sogou_standard_item(
         snippet,
         engine: "sogou".to_string(),
         score: 0.0, // Will be assigned by position later.
+        cookies: vec![],
     })
 }
 
@@ -173,6 +174,7 @@ fn parse_sogou_vrwrap_item(
         snippet,
         engine: "sogou".to_string(),
         score: 0.0,
+        cookies: vec![],
     })
 }
 

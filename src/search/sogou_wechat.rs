@@ -73,7 +73,36 @@ impl SearchEngine for SogouWechatEngine {
             });
         }
 
-        parse_sogou_wechat_html(&html)
+        let mut results = parse_sogou_wechat_html(&html)?;
+
+        // Inject session cookies from the wreq stealth client into results.
+        // The /link redirect URLs need these cookies to pass sogou's antispider
+        // check during the fetch phase. Without them, the obscura browser gets
+        // redirected to the CAPTCHA page.
+        #[cfg(feature = "stealth")]
+        if let Some(ref stealth) = self.stealth {
+            let cookie_header = stealth.cookie_jar.get_cookie_header(
+                &url::Url::parse("https://weixin.sogou.com/").unwrap()
+            );
+            tracing::debug!("sogou_wechat: session cookie header for weixin.sogou.com: {:?} (len={})", cookie_header, cookie_header.len());
+            if !cookie_header.is_empty() {
+                // Convert "name1=val1; name2=val2" into Set-Cookie style strings
+                // that inject_cookies() can parse.
+                let cookies: Vec<String> = cookie_header
+                    .split("; ")
+                    .map(|pair| {
+                        let domain = "Domain=weixin.sogou.com";
+                        format!("{}; {}; Path=/", pair.trim(), domain)
+                    })
+                    .collect();
+                tracing::debug!("sogou_wechat: injecting {} cookies into results", cookies.len());
+                for r in &mut results {
+                    r.cookies = cookies.clone();
+                }
+            }
+        }
+
+        Ok(results)
     }
 }
 
@@ -104,6 +133,7 @@ fn parse_sogou_wechat_html(html: &str) -> Result<Vec<RawSearchResult>, SearchEng
             snippet,
             engine: "sogou_wechat".to_string(),
             score: total - i as f64,
+            cookies: vec![], // Filled in by search() from wreq session.
         });
     }
 
