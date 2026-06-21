@@ -3,25 +3,24 @@ use async_trait::async_trait;
 use super::{SearchParams, RawSearchResult, SearchEngine, SearchEngineError};
 
 /// Sogou general search engine.
+///
+/// Uses plain reqwest (NOT wreq stealth) because wreq's Chrome emulation
+/// auto-injects sec-ch-ua/sec-fetch headers that trigger sogou's antispider
+/// (302 → /antispider). Plain reqwest with a standard browser UA works fine —
+/// even curl with no headers gets 200 from sogou.
 pub struct SogouEngine {
-    #[cfg(feature = "stealth")]
-    stealth: Option<std::sync::Arc<crate::obscura_net::wreq_client::StealthHttpClient>>,
-    plain_client: reqwest::Client,
+    client: reqwest::Client,
 }
 
 impl SogouEngine {
     pub fn new() -> Self {
-        #[cfg(feature = "stealth")]
-        let stealth = {
-            let s = super::build_stealth_client(false); // Sogou is domestic, direct
-            Some(s)
-        };
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("failed to build reqwest client for sogou");
 
-        SogouEngine {
-            #[cfg(feature = "stealth")]
-            stealth,
-            plain_client: super::build_plain_client(10),
-        }
+        SogouEngine { client }
     }
 }
 
@@ -46,22 +45,30 @@ impl SearchEngine for SogouEngine {
             params.pageno,
         );
 
-        let html;
-        #[cfg(feature = "stealth")]
-        {
-            html = if let Some(ref stealth) = self.stealth {
-                match super::stealth_fetch(stealth.as_ref(), &url).await {
-                    Ok((text, _)) => text,
-                    Err(e) => return Err(e),
+        let resp = self.client.get(&url)
+            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .send()
+            .await
+            .map_err(|e| SearchEngineError::Transient(format!("fetch error: {e}")))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            if let Some(location) = resp.headers().get("location") {
+                let loc = location.to_str().unwrap_or("");
+                if loc.contains("/antispider") {
+                    return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
                 }
-            } else {
-                super::plain_fetch(&self.plain_client, &url).await?
-            };
+            }
+            return Err(SearchEngineError::Transient(format!("redirect: {}", resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("?"))));
         }
-        #[cfg(not(feature = "stealth"))]
-        {
-            html = super::plain_fetch(&self.plain_client, &url).await?;
-        }
+
+        let bytes = resp.bytes().await
+            .map_err(|e| SearchEngineError::Transient(format!("read body: {e}")))?;
+
+        // Decode with charset detection (Sogou may return GBK).
+        let html = crate::obscura_net::encoding::decode_non_html(&bytes.to_vec(), None);
 
         // Check for CAPTCHA indicators in the HTML body.
         if html.contains("/antispider") || html.contains("用户频率限制") {

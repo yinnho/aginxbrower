@@ -171,8 +171,6 @@ fn parse_google_html(html: &str) -> Result<Vec<RawSearchResult>, SearchEngineErr
 
     tracing::info!("google: parsed {} results from HTML (len={})", results.len(), html.len());
 
-    tracing::info!("google: parsed {} results from HTML (len={})", results.len(), html.len());
-
     Ok(results)
 }
 
