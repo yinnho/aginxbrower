@@ -175,9 +175,16 @@ impl Page {
             // http://, which only works when the upstream happens to be a
             // Clash-style mixed-mode proxy and breaks plain SOCKS5 servers
             // like `ssh -ND` (#160).
-            Some(Arc::new(StealthHttpClient::with_proxy(
+            let emulation = context
+                .tls_fingerprint
+                .as_deref()
+                .and_then(crate::obscura_net::parse_tls_fingerprint)
+                .unwrap_or(wreq_util::Emulation::Chrome145);
+            Some(Arc::new(StealthHttpClient::with_proxy_and_emulation(
                 context.cookie_jar.clone(),
                 context.proxy_url.as_deref(),
+                None,
+                emulation,
             )))
         } else {
             None

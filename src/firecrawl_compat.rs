@@ -37,6 +37,9 @@ pub struct ScrapeRequest {
     /// is simplified to a direct selector pass-through).
     #[serde(default)]
     pub selector: Option<String>,
+    /// TLS fingerprint override (stealth mode only): "chrome145", "firefox133", etc.
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 fn default_formats() -> Vec<String> {
@@ -120,6 +123,7 @@ pub async fn scrape_handler(
                     wait_secs: Some(2),
                     use_proxy: false,
                     cookies: vec![],
+                    tls_fingerprint: req.tls_fingerprint.clone(),
                 };
                 if let Err(e) = tokio::task::spawn_blocking(move || do_click(click_req)).await {
                     tracing::warn!("firecrawl click action failed: {}", e);
@@ -146,6 +150,7 @@ pub async fn scrape_handler(
         max_chars: 0, // Firecrawl clients expect full content.
         auto_bypass_challenge: true,
         render_tier: Default::default(),
+        tls_fingerprint: req.tls_fingerprint.clone(),
     };
 
     match smart_fetch(fetch_req).await {

@@ -27,11 +27,16 @@ pub struct BrowserContext {
     /// models: file:// is a local file-system read, while private-network is
     /// the broader SSRF gate from issue #4.
     pub allow_private_network: bool,
+    /// TLS fingerprint name override (stealth mode only): "chrome145",
+    /// "firefox133", etc. None → Chrome145. Kept as a String (not the
+    /// `Emulation` enum) so the field exists regardless of the `stealth`
+    /// feature; parsed into an `Emulation` lazily in the stealth client.
+    pub tls_fingerprint: Option<String>,
 }
 
 impl BrowserContext {
     pub fn new(id: String) -> Self {
-        Self::_new_inner(id, None, false, None, None, false)
+        Self::_new_inner(id, None, false, None, None, false, None)
     }
 
     /// Create a BrowserContext with an optional storage directory.
@@ -41,7 +46,7 @@ impl BrowserContext {
         id: String,
         storage_dir: Option<PathBuf>,
     ) -> Self {
-        Self::_new_inner(id, None, false, None, storage_dir, false)
+        Self::_new_inner(id, None, false, None, storage_dir, false, None)
     }
 
     /// Create a BrowserContext with full options including storage_dir.
@@ -52,12 +57,14 @@ impl BrowserContext {
         user_agent: Option<String>,
         storage_dir: Option<PathBuf>,
     ) -> Self {
-        Self::_new_inner(id, proxy_url, stealth, user_agent, storage_dir, false)
+        Self::_new_inner(id, proxy_url, stealth, user_agent, storage_dir, false, None)
     }
 
-    /// Variant that also accepts the `allow_private_network` opt-in. All
-    /// pre-existing constructors default it to `false`; callers that want the
-    /// CLI's `--allow-private-network` (issue #33) behaviour go through here.
+    /// Variant that also accepts the `allow_private_network` opt-in and a TLS
+    /// fingerprint override. All pre-existing constructors default
+    /// `allow_private_network` to `false` and `tls_fingerprint` to None; callers
+    /// that want the CLI's `--allow-private-network` (issue #33) behaviour or a
+    /// custom TLS fingerprint go through here.
     pub fn with_storage_and_network(
         id: String,
         proxy_url: Option<String>,
@@ -65,8 +72,9 @@ impl BrowserContext {
         user_agent: Option<String>,
         storage_dir: Option<PathBuf>,
         allow_private_network: bool,
+        tls_fingerprint: Option<String>,
     ) -> Self {
-        Self::_new_inner(id, proxy_url, stealth, user_agent, storage_dir, allow_private_network)
+        Self::_new_inner(id, proxy_url, stealth, user_agent, storage_dir, allow_private_network, tls_fingerprint)
     }
 
     fn _new_inner(
@@ -76,6 +84,7 @@ impl BrowserContext {
         user_agent: Option<String>,
         storage_dir: Option<PathBuf>,
         allow_private_network: bool,
+        tls_fingerprint: Option<String>,
     ) -> Self {
         let cookie_jar = Arc::new(CookieJar::new());
 
@@ -127,6 +136,7 @@ impl BrowserContext {
             allow_file_access: false,
             storage_dir,
             allow_private_network,
+            tls_fingerprint,
         }
     }
 
@@ -140,7 +150,7 @@ impl BrowserContext {
         stealth: bool,
         user_agent: Option<String>,
     ) -> Self {
-        Self::_new_inner(id, proxy_url, stealth, user_agent, None, false)
+        Self::_new_inner(id, proxy_url, stealth, user_agent, None, false, None)
     }
 
     pub fn with_proxy(id: String, proxy_url: Option<String>) -> Self {

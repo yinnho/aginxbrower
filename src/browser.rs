@@ -24,19 +24,24 @@ impl Browser {
 
     pub fn build(config: BrowserConfig) -> Result<Self, Error> {
         let context = if let Some(ref dir) = config.storage_dir {
-            BrowserContext::with_storage_full(
+            BrowserContext::with_storage_and_network(
                 "api".to_string(),
                 config.proxy,
                 config.stealth,
                 config.user_agent,
                 Some(dir.clone()),
+                false,
+                config.tls_fingerprint.clone(),
             )
         } else {
-            BrowserContext::with_full_options(
+            BrowserContext::with_storage_and_network(
                 "api".to_string(),
                 config.proxy,
                 config.stealth,
                 config.user_agent,
+                None,
+                false,
+                config.tls_fingerprint.clone(),
             )
         };
 
@@ -88,6 +93,12 @@ impl BrowserBuilder {
     }
     pub fn storage_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
         self.config.storage_dir = Some(dir.into());
+        self
+    }
+    /// Override the TLS fingerprint (stealth mode only). Accepts names like
+    /// "chrome145", "firefox133", "safari17_5", "edge145".
+    pub fn tls_fingerprint(mut self, fp: impl Into<String>) -> Self {
+        self.config.tls_fingerprint = Some(fp.into());
         self
     }
     pub fn build(self) -> Result<Browser, Error> {

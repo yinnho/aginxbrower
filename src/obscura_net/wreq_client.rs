@@ -21,6 +21,25 @@ use crate::obscura_net::client::{Response, ObscuraNetError};
 pub const STEALTH_USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 
+/// Map a user-friendly TLS fingerprint name to a wreq `Emulation` variant.
+/// Accepted values (case-insensitive): "chrome145"/"chrome", "chrome131",
+/// "firefox133"/"firefox", "firefox147", "safari17_5"/"safari", "safari18",
+/// "edge145"/"edge". Returns None for unknown names (caller falls back to
+/// Chrome145). Only meaningful when the `stealth` feature is enabled.
+#[cfg(feature = "stealth")]
+pub fn parse_tls_fingerprint(s: &str) -> Option<wreq_util::Emulation> {
+    match s.to_ascii_lowercase().as_str() {
+        "chrome145" | "chrome" => Some(wreq_util::Emulation::Chrome145),
+        "chrome131" => Some(wreq_util::Emulation::Chrome131),
+        "firefox133" | "firefox" => Some(wreq_util::Emulation::Firefox133),
+        "firefox147" => Some(wreq_util::Emulation::Firefox147),
+        "safari17_5" | "safari" => Some(wreq_util::Emulation::Safari17_5),
+        "safari18" => Some(wreq_util::Emulation::Safari18),
+        "edge145" | "edge" => Some(wreq_util::Emulation::Edge145),
+        _ => None,
+    }
+}
+
 #[cfg(feature = "stealth")]
 pub struct StealthHttpClient {
     /// Proxy-configured client. None when no proxy is set.
@@ -47,16 +66,17 @@ impl StealthHttpClient {
     /// is wired via `Proxy::http` (see note below); otherwise the client is
     /// direct-only.
     fn build_stealth_client(proxy_url: Option<&str>) -> wreq::Client {
-        Self::build_stealth_client_with_os(proxy_url, None)
+        Self::build_stealth_client_with_os(proxy_url, None, wreq_util::Emulation::Chrome145)
     }
 
-    /// Build a stealth wreq client with an optional explicit OS override.
-    /// When `os_override` is Some, it takes precedence over the UA-derived OS,
-    /// allowing engines like Google to use Android TLS fingerprints for GSA
-    /// User-Agent requests.
+    /// Build a stealth wreq client with an optional explicit OS override and a
+    /// chosen TLS `emulation` (browser fingerprint). When `os_override` is Some,
+    /// it takes precedence over the UA-derived OS, allowing engines like Google
+    /// to use Android TLS fingerprints for GSA User-Agent requests.
     fn build_stealth_client_with_os(
         proxy_url: Option<&str>,
         os_override: Option<wreq_util::EmulationOS>,
+        emulation: wreq_util::Emulation,
     ) -> wreq::Client {
         let cert_store = wreq::tls::CertStore::default();
 
@@ -81,7 +101,7 @@ impl StealthHttpClient {
         };
 
         let emulation_opts = wreq_util::EmulationOption::builder()
-            .emulation(wreq_util::Emulation::Chrome145)
+            .emulation(emulation)
             .emulation_os(os)
             .build();
 
@@ -119,8 +139,20 @@ impl StealthHttpClient {
         proxy_url: Option<&str>,
         os_override: Option<wreq_util::EmulationOS>,
     ) -> Self {
-        let proxied_client = proxy_url.map(|_| Self::build_stealth_client_with_os(proxy_url, os_override));
-        let direct_client = Self::build_stealth_client_with_os(None, os_override);
+        Self::with_proxy_and_emulation(cookie_jar, proxy_url, os_override, wreq_util::Emulation::Chrome145)
+    }
+
+    /// Build a StealthHttpClient with an explicit TLS `emulation` (browser
+    /// fingerprint) and optional OS override. Use this to switch between
+    /// Chrome/Firefox/Safari/Edge fingerprints per request.
+    pub fn with_proxy_and_emulation(
+        cookie_jar: Arc<CookieJar>,
+        proxy_url: Option<&str>,
+        os_override: Option<wreq_util::EmulationOS>,
+        emulation: wreq_util::Emulation,
+    ) -> Self {
+        let proxied_client = proxy_url.map(|_| Self::build_stealth_client_with_os(proxy_url, os_override, emulation));
+        let direct_client = Self::build_stealth_client_with_os(None, os_override, emulation);
 
         StealthHttpClient {
             proxied_client,

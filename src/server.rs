@@ -61,11 +61,14 @@ pub fn should_auto_proxy(url: &str) -> bool {
 ///
 /// Auto-detection: if the target URL matches a known blocked domain, proxy is
 /// used regardless of `use_proxy` flag (the site is unreachable without proxy).
-fn build_browser(use_proxy: bool, url: &str) -> Result<Browser> {
+fn build_browser(use_proxy: bool, url: &str, tls_fingerprint: Option<&str>) -> Result<Browser> {
     // Stealth defaults on; disable via AGINXBROWSER_STEALTH=0 (diagnostic / when
     // the wreq stealth client misbehaves on a given site).
     let stealth = !matches!(std::env::var("AGINXBROWSER_STEALTH").ok().as_deref(), Some("0"));
     let mut builder = Browser::builder().stealth(stealth);
+    if let Some(fp) = tls_fingerprint {
+        builder = builder.tls_fingerprint(fp);
+    }
     if should_auto_proxy(url) || use_proxy {
         if let Ok(proxy) = std::env::var("OBSCURA_PROXY") {
             builder = builder.proxy(&proxy);
@@ -241,7 +244,7 @@ fn fetch_url_text_with_cookies(
     let cookies = cookies.to_vec(); // Clone so the closure owns the data.
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(use_proxy, &url)?;
+            let browser = build_browser(use_proxy, &url, None)?;;
             if !cookies.is_empty() {
                 inject_cookies(&browser, &cookies, &url);
             }
@@ -284,7 +287,7 @@ fn fetch_url_text_with_cookies(
 pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy, &req.url)?;
+            let browser = build_browser(req.use_proxy, &req.url, req.tls_fingerprint.as_deref())?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;
@@ -347,7 +350,7 @@ pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
 pub fn do_click(req: ClickRequest) -> Result<ClickResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy, &req.url)?;
+            let browser = build_browser(req.use_proxy, &req.url, req.tls_fingerprint.as_deref())?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;
@@ -383,7 +386,7 @@ pub fn do_click(req: ClickRequest) -> Result<ClickResponse> {
 pub fn do_eval(req: EvalRequest) -> Result<EvalResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy, &req.url)?;
+            let browser = build_browser(req.use_proxy, &req.url, req.tls_fingerprint.as_deref())?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;

@@ -59,6 +59,10 @@ pub struct FetchRequest {
     /// HTTP-only (fastest, no JS). `obscura`: always use the full browser.
     #[serde(default)]
     pub render_tier: RenderTier,
+    /// TLS fingerprint override (stealth mode only): "chrome145", "firefox133",
+    /// "safari17_5", "edge145", etc. None → Chrome145 default.
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 /// Tiered rendering strategy selector.
@@ -103,6 +107,9 @@ pub struct ClickRequest {
     /// Cookies to inject before navigation.
     #[serde(default)]
     pub cookies: Vec<String>,
+    /// TLS fingerprint override (stealth mode only).
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +124,9 @@ pub struct EvalRequest {
     /// Cookies to inject before navigation.
     #[serde(default)]
     pub cookies: Vec<String>,
+    /// TLS fingerprint override (stealth mode only).
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

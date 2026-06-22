@@ -19,4 +19,4 @@ pub use encoding::{
 };
 pub use robots::RobotsCache;
 #[cfg(feature = "stealth")]
-pub use wreq_client::{StealthHttpClient, STEALTH_USER_AGENT};
+pub use wreq_client::{StealthHttpClient, STEALTH_USER_AGENT, parse_tls_fingerprint};

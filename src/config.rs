@@ -11,6 +11,9 @@ pub struct BrowserConfig {
     pub user_agent: Option<String>,
     /// Directory for persistent cookie storage
     pub storage_dir: Option<PathBuf>,
+    /// TLS fingerprint override (stealth mode only): "chrome145", "firefox133",
+    /// "safari17_5", "edge145", etc. None → Chrome145 default.
+    pub tls_fingerprint: Option<String>,
 }
 
 impl Default for BrowserConfig {
@@ -20,6 +23,7 @@ impl Default for BrowserConfig {
             stealth: false,
             user_agent: None,
             storage_dir: None,
+            tls_fingerprint: None,
         }
     }
 }

@@ -39,6 +39,9 @@ pub struct FetchParams {
     /// Rendering strategy: "auto" (default), "http", or "obscura"
     #[serde(default)]
     pub render_tier: crate::RenderTier,
+    /// TLS fingerprint override (stealth mode only): "chrome145", "firefox133", etc.
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -135,6 +138,7 @@ impl AginxBrowserMcp {
             max_chars: params.max_chars,
             auto_bypass_challenge: params.auto_bypass_challenge,
             render_tier: params.render_tier,
+            tls_fingerprint: params.tls_fingerprint,
         };
 
         match tokio::task::spawn_blocking(move || do_fetch(req)).await {
@@ -161,6 +165,7 @@ impl AginxBrowserMcp {
             wait_secs: params.wait_secs,
             use_proxy: false,
             cookies: vec![],
+            tls_fingerprint: None,
         };
 
         match tokio::task::spawn_blocking(move || do_eval(req)).await {
@@ -185,6 +190,7 @@ impl AginxBrowserMcp {
             wait_secs: params.wait_secs,
             use_proxy: false,
             cookies: vec![],
+            tls_fingerprint: None,
         };
 
         match tokio::task::spawn_blocking(move || do_click(req)).await {
