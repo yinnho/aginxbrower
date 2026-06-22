@@ -17,7 +17,7 @@ pub enum SearchError {
 /// Check if a URL points to a known foreign/blocked domain that requires proxy.
 /// Uses suffix matching: `sub.github.com` matches `github.com`.
 /// Returns `false` if URL parsing fails (safe fallback).
-fn should_auto_proxy(url: &str) -> bool {
+pub fn should_auto_proxy(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };

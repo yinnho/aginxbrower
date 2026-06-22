@@ -14,6 +14,7 @@ mod cookie;
 mod error;
 mod mcp;
 mod page;
+mod render;
 mod search;
 mod server;
 
@@ -23,7 +24,8 @@ mod obscura_net;
 mod obscura_js;
 mod obscura_browser;
 
-use server::{do_click, do_eval, do_fetch, do_search, SearchError};
+use server::{do_click, do_eval, do_search, SearchError};
+use render::smart_fetch;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct FetchRequest {
@@ -51,6 +53,24 @@ pub struct FetchRequest {
     /// the `cf_clearance` cookie and re-navigates. Default: true.
     #[serde(default = "default_true")]
     pub auto_bypass_challenge: bool,
+    /// Rendering strategy. `auto` (default): try fast HTTP-direct first, fall
+    /// back to the JS browser only if the page needs rendering. `http`: force
+    /// HTTP-only (fastest, no JS). `obscura`: always use the full browser.
+    #[serde(default)]
+    pub render_tier: RenderTier,
+}
+
+/// Tiered rendering strategy selector.
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderTier {
+    /// HTTP-direct first, fall back to obscura browser. (default)
+    #[default]
+    Auto,
+    /// Pure HTTP, no V8/JS. Fastest; misses JS-rendered content.
+    Http,
+    /// Always use the obscura browser (current behaviour pre-tiering).
+    Obscura,
 }
 
 fn default_max_chars() -> usize {
@@ -267,7 +287,7 @@ async fn fetch_handler(Json(req): Json<FetchRequest>) -> Result<impl IntoRespons
         return Ok((StatusCode::OK, Json(cached)));
     }
 
-    let resp = spawn_blocking(move || do_fetch(req)).await??;
+    let resp = smart_fetch(req).await?;
     fetch_cache_put(&cache_key, &resp);
     Ok((StatusCode::OK, Json(resp)))
 }
@@ -275,9 +295,9 @@ async fn fetch_handler(Json(req): Json<FetchRequest>) -> Result<impl IntoRespons
 /// Cache key: the request fields that change the response.
 fn fetch_cache_key(req: &FetchRequest) -> String {
     format!(
-        "{}|{:?}|{:?}|{}|{:?}|{}|{}",
+        "{}|{:?}|{:?}|{}|{:?}|{}|{}|{}|{:?}",
         req.url, req.format, req.selector, req.use_proxy, req.cookies, req.max_chars,
-        req.wait_secs.unwrap_or(0),
+        req.wait_secs.unwrap_or(0), req.auto_bypass_challenge, req.render_tier,
     )
 }
 

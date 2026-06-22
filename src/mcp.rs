@@ -36,6 +36,9 @@ pub struct FetchParams {
     /// Auto-detect and bypass Cloudflare Turnstile challenges (default: true)
     #[serde(default = "default_true")]
     pub auto_bypass_challenge: bool,
+    /// Rendering strategy: "auto" (default), "http", or "obscura"
+    #[serde(default)]
+    pub render_tier: crate::RenderTier,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -131,6 +134,7 @@ impl AginxBrowserMcp {
             cookies: vec![],
             max_chars: params.max_chars,
             auto_bypass_challenge: params.auto_bypass_challenge,
+            render_tier: params.render_tier,
         };
 
         match tokio::task::spawn_blocking(move || do_fetch(req)).await {
