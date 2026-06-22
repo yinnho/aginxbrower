@@ -17,6 +17,7 @@ use crate::server::{do_click};
 use crate::{AppError, ClickRequest, FetchRequest, OutputFormat};
 
 /// Firecrawl `/v1/scrape` request.
+#[allow(dead_code)] // only_main_content/timeout accepted for API compat, not yet wired
 #[derive(Debug, Deserialize)]
 pub struct ScrapeRequest {
     pub url: String,
@@ -48,6 +49,7 @@ fn default_formats() -> Vec<String> {
 
 /// A pre-extraction action. We support `click` and `wait`; `screenshot` and
 /// others are accepted but ignored (no screenshot support yet).
+#[allow(dead_code)] // WriteText/PressKey fields parsed for API completeness, not implemented
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ScrapeAction {

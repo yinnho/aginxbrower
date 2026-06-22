@@ -65,6 +65,7 @@ impl StealthHttpClient {
     /// Build a stealth wreq client. When `proxy_url` is Some, the SOCKS5 proxy
     /// is wired via `Proxy::http` (see note below); otherwise the client is
     /// direct-only.
+    #[allow(dead_code)] // convenience wrapper kept for future callers
     fn build_stealth_client(proxy_url: Option<&str>) -> wreq::Client {
         Self::build_stealth_client_with_os(proxy_url, None, wreq_util::Emulation::Chrome145)
     }

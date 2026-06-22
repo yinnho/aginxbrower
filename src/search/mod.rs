@@ -103,6 +103,7 @@ impl SearchEngineRegistry {
     }
 
     /// Check if an engine is currently suspended.
+    #[allow(dead_code)]
     async fn is_suspended(&self, name: &str) -> bool {
         let suspended = self.suspended.read().await;
         if let Some(resume_at) = suspended.get(name) {
@@ -382,6 +383,7 @@ pub fn build_stealth_client(
 }
 
 #[cfg(not(feature = "stealth"))]
+#[allow(dead_code)] // public helper stub for non-stealth builds
 pub fn build_stealth_client(_use_proxy: bool) -> Option<()> {
     None
 }
@@ -391,6 +393,7 @@ pub fn build_stealth_client(_use_proxy: bool) -> Option<()> {
 /// Chrome145 TLS fingerprint + mobile UA is detected as inconsistent and
 /// Google returns a JS-only page instead of server-rendered HTML.
 #[cfg(feature = "stealth")]
+#[allow(dead_code)] // public helper for engines needing an Android TLS fingerprint
 pub fn build_android_stealth_client(
     use_proxy: bool,
 ) -> Arc<crate::obscura_net::wreq_client::StealthHttpClient> {
@@ -409,6 +412,7 @@ pub fn build_android_stealth_client(
 }
 
 #[cfg(not(feature = "stealth"))]
+#[allow(dead_code)] // public helper stub for non-stealth builds
 pub fn build_android_stealth_client(_use_proxy: bool) -> Option<()> {
     None
 }

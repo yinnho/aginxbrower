@@ -8,7 +8,10 @@ use anyhow::{Context, Result};
 /// Error type for /search (separate from anyhow so we can map to 503 vs 500).
 #[derive(Debug)]
 pub enum SearchError {
-    /// SearXNG backend unreachable / errored → 503
+    /// Search backend unreachable / errored → 503 Service Unavailable.
+    /// Reserved for future backend integration; not currently constructed
+    /// by the native engines.
+    #[allow(dead_code)]
     BackendUnavailable(String),
     /// Other internal error → 500
     Other(String),
@@ -219,18 +222,6 @@ fn collapse_whitespace(s: &str) -> String {
         .join("\n")
 }
 
-/// Core fetch: navigate to `url`, wait for JS, return rendered text (markdown-like).
-/// Used by both /fetch and /search's body-grabbing. Runs on a dedicated
-/// current-thread runtime (V8 is !Send). `max_chars=0` means unlimited.
-fn fetch_url_text(
-    url: String,
-    use_proxy: bool,
-    wait_secs: u64,
-    max_chars: usize,
-) -> Result<(String, bool)> {
-    fetch_url_text_with_cookies(url, use_proxy, wait_secs, max_chars, &[])
-}
-
 /// Same as fetch_url_text but injects search-session cookies before navigation.
 /// Needed for sogou WeChat /link redirect URLs which require the sogou session
 /// cookie to pass the antispider check.
@@ -244,7 +235,7 @@ fn fetch_url_text_with_cookies(
     let cookies = cookies.to_vec(); // Clone so the closure owns the data.
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(use_proxy, &url, None)?;;
+            let browser = build_browser(use_proxy, &url, None)?;
             if !cookies.is_empty() {
                 inject_cookies(&browser, &cookies, &url);
             }
