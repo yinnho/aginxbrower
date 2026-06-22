@@ -229,10 +229,13 @@ fn normalize_url(raw: &str) -> String {
         let normalized = host.strip_prefix("www.").unwrap_or(host).to_lowercase();
         // This is a no-op if the host is already the same; we just ensure
         // consistent casing. Url::set_host is unavailable, so we rebuild.
+        // Preserve port number if present.
+        let port_suffix = url.port().map(|p| format!(":{}", p)).unwrap_or_default();
         if let Ok(new) = Url::parse(&format!(
-            "{}://{}{}{}{}",
+            "{}://{}{}{}{}{}",
             url.scheme(),
             normalized,
+            port_suffix,
             url.path().strip_suffix('/').unwrap_or(url.path()),
             if url.query().is_some() { "?" } else { "" },
             url.query().unwrap_or(""),
@@ -267,10 +270,13 @@ fn normalize_url(raw: &str) -> String {
     let stripped = path.strip_suffix('/').unwrap_or(path);
     if stripped != path {
         // Cannot mutate path in-place easily; rebuild.
+        // Preserve port number.
+        let port_suffix = url.port().map(|p| format!(":{}", p)).unwrap_or_default();
         if let Ok(new) = Url::parse(&format!(
-            "{}://{}{}{}{}",
+            "{}://{}{}{}{}{}",
             url.scheme(),
             url.host_str().unwrap_or(""),
+            port_suffix,
             stripped,
             if url.query().is_some() { "?" } else { "" },
             url.query().unwrap_or(""),
@@ -499,7 +505,7 @@ pub async fn plain_fetch(client: &reqwest::Client, url: &str) -> Result<String, 
             .map_err(|e| SearchEngineError::Transient(format!("read body error: {e}")))?;
 
         // Decode with charset detection (handles GBK/GB2312 from Baidu/Sogou).
-        let text = crate::obscura_net::encoding::decode_non_html(&bytes.to_vec(), None);
+        let text = crate::obscura_net::encoding::decode_non_html(&bytes, None);
         return Ok(text);
     }
 

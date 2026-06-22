@@ -133,14 +133,8 @@ fn unwrap_bing_url(raw: &str) -> String {
 
     // Base64url decode the part after "a1".
     let b64 = &u_val[2..];
-    // Add padding if needed.
-    let padded = match b64.len() % 4 {
-        2 => format!("{}==", b64),
-        3 => format!("{}=", b64),
-        _ => b64.to_string(),
-    };
 
-    match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(padded.trim_end_matches('=')) {
+    match base64::engine::general_purpose::URL_SAFE.decode(b64) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(decoded) => {
                 // The decoded string may contain a URL directly or may have

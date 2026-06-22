@@ -41,24 +41,17 @@ impl SearchEngine for SogouWechatEngine {
         // weixin.sogou.com doesn't check TLS fingerprint (curl works fine),
         // and plain reqwest avoids the Chrome Client Hints headers that
         // wreq stealth auto-injects (which trigger /link's antispider).
-        let results = reqwest_search_and_resolve(&self.plain_client, query, params.pageno).await;
-
-        if results.is_empty() {
-            // Could be CAPTCHA or network error — return empty rather than
-            // erroring so other engines can still contribute results.
-            return Ok(Vec::new());
-        }
-
-        Ok(results)
+        reqwest_search_and_resolve(&self.plain_client, query, params.pageno).await
     }
 }
 
-/// Use plain reqwest
+/// Use plain reqwest to search weixin.sogou.com and resolve /link redirect URLs.
+/// Returns Err(Captcha) when CAPTCHA is detected, so the engine gets suspended.
 async fn reqwest_search_and_resolve(
     plain_client: &reqwest::Client,
     query: &str,
     pageno: usize,
-) -> Vec<RawSearchResult> {
+) -> Result<Vec<RawSearchResult>, SearchEngineError> {
     let search_url = format!(
         "https://weixin.sogou.com/weixin?type=2&query={}&page={}&ie=utf8",
         urlencoding::encode(query),
@@ -76,7 +69,7 @@ async fn reqwest_search_and_resolve(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("sogou_wechat: reqwest search failed: {}", e);
-            return Vec::new();
+            return Err(SearchEngineError::Transient(format!("search request failed: {}", e)));
         }
     };
 
@@ -99,14 +92,16 @@ async fn reqwest_search_and_resolve(
         Ok(t) => t,
         Err(e) => {
             tracing::warn!("sogou_wechat: reqwest search read body failed: {}", e);
-            return Vec::new();
+            return Err(SearchEngineError::Transient(format!("read body failed: {}", e)));
         }
     };
 
     // Check for CAPTCHA.
     if html.contains("antispider") || html.contains("用户频率限制") {
         tracing::warn!("sogou_wechat: reqwest search hit CAPTCHA");
-        return Vec::new();
+        return Err(SearchEngineError::Captcha {
+            suspend_secs: 3600,
+        });
     }
 
     // Step 2: Parse search results.
@@ -114,12 +109,12 @@ async fn reqwest_search_and_resolve(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("sogou_wechat: reqwest parse failed: {:?}", e);
-            return Vec::new();
+            return Err(SearchEngineError::Transient(format!("parse failed: {:?}", e)));
         }
     };
 
     if results.is_empty() {
-        return results;
+        return Ok(results);
     }
 
     // Step 3: Resolve /link redirect URLs.
@@ -183,7 +178,7 @@ async fn reqwest_search_and_resolve(
         }
     }
 
-    results
+    Ok(results)
 }
 
 /// Extract mp.weixin.qq.com

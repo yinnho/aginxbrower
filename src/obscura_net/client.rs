@@ -124,6 +124,17 @@ fn validate_url(url: &Url, allow_private_network: bool) -> Result<(), ObscuraNet
                         ip
                     )));
                 }
+                // Check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+                if let Some(ipv4) = ip.to_ipv4() {
+                    if ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local()
+                        || ipv4.is_broadcast() || ipv4.is_documentation()
+                    {
+                        return Err(ObscuraNetError::Network(format!(
+                            "Access to private/internal IP address {} (mapped from IPv6) is not allowed",
+                            ipv4
+                        )));
+                    }
+                }
             }
             url::Host::Domain(domain) => {
                 let lower_domain = domain.to_lowercase();

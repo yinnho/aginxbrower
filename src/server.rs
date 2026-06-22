@@ -1,6 +1,6 @@
 use crate::{
     ClickRequest, ClickResponse, EvalRequest, EvalResponse, FetchRequest, FetchResponse,
-    OutputFormat, SearchRequest, SearchResponse, SearchResultItem,
+    OutputFormat, SearchRequest, SearchResponse,
 };
 use crate::browser::Browser;
 use anyhow::{Context, Result};
@@ -112,7 +112,10 @@ fn inject_cookies(browser: &Browser, cookies: &[String], target_url: &str) {
     let store = browser.cookies();
     let base = match url::Url::parse(target_url) {
         Ok(u) => u,
-        Err(_) => return,
+        Err(e) => {
+            tracing::warn!("inject_cookies: failed to parse target URL '{}': {}", target_url, e);
+            return;
+        }
     };
     let domain = format!("Domain={}", base.host_str().unwrap_or(""));
     for c in cookies {
@@ -396,44 +399,4 @@ pub async fn do_search(req: SearchRequest) -> Result<SearchResponse, SearchError
         results: items,
         search_backend: "native".into(),
     })
-}
-
-fn extract_text(html: &str, selector: Option<&str>) -> Result<String> {
-    let fragment = scraper::Html::parse_document(html);
-    let selector = match selector {
-        Some(s) => Some(
-            scraper::Selector::parse(s).map_err(|e| anyhow::anyhow!("invalid selector: {e}"))?,
-        ),
-        None => None,
-    };
-
-    if let Some(sel) = selector {
-        Ok(fragment
-            .select(&sel)
-            .map(|el| el.text().collect::<Vec<_>>().join(" "))
-            .collect::<Vec<_>>()
-            .join("\n"))
-    } else {
-        Ok(fragment
-            .root_element()
-            .text()
-            .collect::<Vec<_>>()
-            .join(" "))
-    }
-}
-
-fn html_to_markdown(html: &str, selector: Option<&str>) -> Result<String> {
-    let fragment = scraper::Html::parse_document(html);
-    let selector = match selector {
-        Some(s) => Some(
-            scraper::Selector::parse(s).map_err(|e| anyhow::anyhow!("invalid selector: {e}"))?,
-        ),
-        None => None,
-    };
-    let node_ref = selector
-        .and_then(|sel| fragment.select(&sel).next())
-        .map(|el| el.clone())
-        .unwrap_or_else(|| fragment.root_element().clone());
-
-    Ok(html2md::parse_html(&node_ref.html()))
 }

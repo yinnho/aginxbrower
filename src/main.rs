@@ -254,12 +254,12 @@ async fn fetch_handler(Json(req): Json<FetchRequest>) -> Result<impl IntoRespons
     Ok((StatusCode::OK, Json(resp)))
 }
 
-/// Cache key: the request fields that change the response. `wait_secs` is
-/// intentionally excluded (it only waits for rendering, same final content).
+/// Cache key: the request fields that change the response.
 fn fetch_cache_key(req: &FetchRequest) -> String {
     format!(
-        "{}|{:?}|{:?}|{}|{:?}|{}",
+        "{}|{:?}|{:?}|{}|{:?}|{}|{}",
         req.url, req.format, req.selector, req.use_proxy, req.cookies, req.max_chars,
+        req.wait_secs.unwrap_or(0),
     )
 }
 
@@ -298,7 +298,19 @@ fn fetch_cache_put(key: &str, resp: &FetchResponse) {
     if let Ok(mut cache) = FETCH_CACHE.lock() {
         // Bound the cache to avoid unbounded growth across distinct URLs.
         if cache.len() > 256 {
-            cache.clear();
+            // First, remove expired entries.
+            let ttl = cache_ttl_secs();
+            let now = now_secs();
+            cache.retain(|_, (ts, _)| now.saturating_sub(*ts) < ttl);
+            // If still over limit after eviction, keep only the newest half.
+            if cache.len() > 256 {
+                let mut entries: Vec<(String, (u64, FetchResponse))> = cache.drain().collect();
+                entries.sort_by_key(|(_, (ts, _))| *ts);
+                let keep = entries.len() / 2;
+                for (k, v) in entries.into_iter().rev().take(keep) {
+                    cache.insert(k, v);
+                }
+            }
         }
         cache.insert(key.to_string(), (now_secs(), resp.clone()));
     }
