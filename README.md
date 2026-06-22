@@ -8,8 +8,11 @@
 
 - **抓取**：渲染 JS、过风控（微信公众号免 cookie）、提取正文
 - **搜索**：`/search` 原生多引擎聚合（百度/Bing/搜狗/搜狗微信/Google），并可对前 N 条结果自动抓正文，Agent 一步完成"搜→读"
-- **TLS 指纹伪装**：stealth 模式使用 BoringSSL 模拟 Chrome145 指纹，绕过搜狗微信等基于 TLS 指纹的反爬检测
-- **复杂场景 fallback 到 Chromium**：本 PoC 不实现 Chromium fallback，后续可在调度层根据失败类型切换
+- **分层渲染**：静态页面纯 HTTP 直取（~100ms），需要 JS 渲染时才启动浏览器（~1-2s），80% 页面加速
+- **Cloudflare Turnstile 自动绕过**：检测 "Just a moment..." 挑战页，自动等待 `cf_clearance` cookie
+- **TLS 指纹伪装**：stealth 模式模拟 Chrome145/Firefox133/Safari/Edge 指纹，可按请求切换，绕过基于 TLS 指纹的反爬检测
+- **MCP Server**：`--mcp` 模式暴露 fetch/eval/click/search 为 MCP 工具，Claude Desktop/Cursor 直接调用
+- **Firecrawl 兼容**：`/v1/scrape` 端点，现有 Firecrawl 客户端改 base URL 即可迁移
 
 ## 目录结构
 
@@ -23,6 +26,9 @@ aginxbrowser/
 └── src/
     ├── main.rs              # HTTP 服务入口与路由
     ├── server.rs            # 业务层（fetch/click/eval/search）
+    ├── render.rs            # 分层渲染（HTTP 直取 → obscura 浏览器）
+    ├── mcp.rs               # MCP Server（stdio，fetch/eval/click/search 工具）
+    ├── firecrawl_compat.rs  # Firecrawl 兼容 /v1/scrape 端点
     ├── browser.rs           # 顶层 API：Browser、BrowserBuilder
     ├── page.rs              # 顶层 API：Page、Element
     ├── config.rs            # BrowserConfig
@@ -72,11 +78,11 @@ aginxbrowser/
 ## 构建
 
 ```bash
-# 普通构建（不含 stealth）
-cargo build --release --no-default-features
-
-# 含 stealth（需 go + cmake + C++ 工具链）
+# 普通构建（不含 stealth，TLS 指纹等功能不生效）
 cargo build --release
+
+# 含 stealth（需 go + cmake + C++ 工具链，启用 TLS 指纹伪装）
+cargo build --release --features stealth
 ```
 
 release 二进制预计在 70MB 左右。
@@ -123,6 +129,9 @@ curl http://127.0.0.1:8089/health
 | use_proxy | bool | 否 | 走 `OBSCURA_PROXY` 代理，默认 `false`（国内站点直连；国外站点设 `true`） |
 | cookies | string[] | 否 | 导航前注入的 cookie（`["name=value", ...]`），用于需登录态的站点 |
 | max_chars | usize | 否 | 截断 `content` 到指定字符数，默认 `50000`，`0` 不限 |
+| auto_bypass_challenge | bool | 否 | 自动检测并绕过 Cloudflare Turnstile 挑战（等 `cf_clearance` cookie），默认 `true` |
+| render_tier | string | 否 | 渲染策略：`auto`（默认，HTTP 优先回退浏览器）/ `http`（强制纯 HTTP）/ `obscura`（强制浏览器） |
+| tls_fingerprint | string | 否 | TLS 指纹（stealth 模式）：`chrome145`/`firefox133`/`safari17_5`/`edge145`，默认 `chrome145` |
 
 响应字段：
 
@@ -133,7 +142,9 @@ curl http://127.0.0.1:8089/health
 | content | string | 抓取内容（markdown/html/text） |
 | truncated | bool | `content` 是否被 `max_chars` 截断 |
 
-**缓存**：`/fetch` 有进程内缓存（key 含 url/format/selector/cookies/use_proxy/max_chars），TTL 由 `AGINXBROWSER_CACHE_TTL_SECS` 控制（默认 600s，`0` 禁用）。重复抓取同一 URL 命中缓存（~0.01s vs 首次 ~1s）。
+**缓存**：`/fetch` 有进程内缓存（key 含 url/format/selector/cookies/use_proxy/max_chars/render_tier/tls_fingerprint），TTL 由 `AGINXBROWSER_CACHE_TTL_SECS` 控制（默认 600s，`0` 禁用）。重复抓取同一 URL 命中缓存（~0.01s vs 首次 ~1s）。
+
+**分层渲染**：默认 `render_tier:"auto"`，先尝试纯 HTTP 直取（`ObscuraHttpClient`，~100ms），内容不足时（SPA 壳、反爬重定向、非 200）自动回退到 obscura 浏览器渲染（~1-2s）。静态页面 80% 命中 Tier 1，显著加速。
 
 示例：
 
@@ -301,6 +312,77 @@ curl -s -X POST http://127.0.0.1:8089/search \
 
 > 设计细节见 [`docs/search-design.md`](docs/search-design.md)。
 
+### POST /v1/scrape（Firecrawl 兼容）
+
+[Firecrawl](https://github.com/mendableai/firecrawl) 兼容端点。现有 Firecrawl 客户端只需改 base URL 即可迁移到 AginxBrowser。
+
+请求字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| url | string | 是 | 目标 URL |
+| formats | string[] | 否 | 输出格式 `["markdown"]`（默认）/`["html"]`/`["markdown","html"]` |
+| onlyMainContent | bool | 否 | 仅主内容（接受，暂未实现） |
+| waitFor | u64 | 否 | 等待 JS 渲染毫秒数 |
+| timeout | u32 | 否 | 超时（毫秒） |
+| actions | object[] | 否 | 抓取前动作：`{"type":"click","selector":"..."}`/`{"type":"wait","milliseconds":1000}` |
+| selector | string | 否 | CSS 选择器 |
+| tls_fingerprint | string | 否 | TLS 指纹（stealth 模式） |
+
+示例：
+
+```bash
+curl -s -X POST http://127.0.0.1:8089/v1/scrape -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","formats":["markdown","html"]}'
+```
+
+响应（Firecrawl 格式，成功/失败均返回 HTTP 200，用 `success` 字段区分）：
+
+```json
+{
+  "success": true,
+  "data": {
+    "markdown": "...",
+    "html": "...",
+    "metadata": {
+      "title": "Example Domain",
+      "sourceURL": "https://example.com/",
+      "statusCode": 200
+    }
+  }
+}
+```
+
+## MCP Server
+
+`--mcp` 模式将 AginxBrowser 包装为 MCP（Model Context Protocol）Server，Claude Desktop、Cursor 等 AI Agent 可直接调用，无需 HTTP 客户端。
+
+```bash
+./target/release/aginxbrowser --mcp
+```
+
+暴露 4 个工具，参数与 `/fetch`、`/eval`、`/click`、`/search` 端点一致：
+
+| 工具 | 说明 |
+|------|------|
+| `fetch` | 抓取页面（支持 `render_tier`、`tls_fingerprint`、`auto_bypass_challenge`） |
+| `eval` | 执行 JS |
+| `click` | 点击元素 |
+| `search` | 多引擎搜索 |
+
+Claude Desktop 配置（`claude_desktop_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "aginxbrowser": {
+      "command": "/path/to/aginxbrowser",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
 ## 错误处理
 
 API 返回不同 HTTP 状态码区分错误类型：
@@ -383,7 +465,7 @@ curl -s -X POST http://127.0.0.1:8089/search -H 'Content-Type: application/json'
 1. 增加 `POST /session` 会话保持，复用浏览器实例，减少启动开销。
 2. 增加 `POST /form`：自动填充 input 并 submit。
 3. 增加失败重试 + 超时细粒度控制。
-4. 在调度层实现 Chromium fallback 策略。
+4. Firefox 后端（Camoufox + CDP 适配），Chrome 指纹检测不过的站点尝试 Firefox。
 5. 暴露 Prometheus /healthz 等运维端点。
 
 ## 与 Chromium 对比
@@ -398,8 +480,12 @@ curl -s -X POST http://127.0.0.1:8089/search -H 'Content-Type: application/json'
 | 复杂 SPA 兼容 | 中等 | 高 |
 | 代理 | ✅ | ✅ |
 | Cookie 持久化 | ✅ | ✅ |
-| TLS 指纹伪装 | ✅ (stealth) | ✅ |
+| TLS 指纹伪装 | ✅ (stealth，可切换) | ✅ |
 | 内置搜索 | ✅ (5 引擎) | ❌ |
+| 分层渲染加速 | ✅ (HTTP 直取优先) | ❌ |
+| Cloudflare 自动绕过 | ✅ | 需插件 |
+| MCP Server | ✅ | ❌ |
+| Firecrawl 兼容 API | ✅ | ❌ |
 
 ## 许可证
 
