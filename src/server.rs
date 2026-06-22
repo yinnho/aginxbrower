@@ -13,16 +13,59 @@ pub enum SearchError {
     Other(String),
 }
 
+/// Check if a URL points to a known foreign/blocked domain that requires proxy.
+/// Uses suffix matching: `sub.github.com` matches `github.com`.
+/// Returns `false` if URL parsing fails (safe fallback).
+fn should_auto_proxy(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+
+    // Known foreign domains that are blocked in China.
+    // Suffix match: `raw.githubusercontent.com` matches `githubusercontent.com`.
+    const BLOCKED_DOMAINS: &[&str] = &[
+        "github.com",
+        "githubusercontent.com",
+        "github.io",
+        "google.com",
+        "google.co.jp",
+        "googleapis.com",
+        "googleusercontent.com",
+        "wikipedia.org",
+        "stackoverflow.com",
+        "medium.com",
+        "x.com",
+        "twitter.com",
+        "youtube.com",
+        "reddit.com",
+        "openai.com",
+        "anthropic.com",
+    ];
+
+    for domain in BLOCKED_DOMAINS {
+        if host == *domain || host.ends_with(&format!(".{}", domain)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Build a browser instance.
 /// `use_proxy` decides whether the upstream `OBSCURA_PROXY` is applied. Domestic
 /// sites should pass `false` (direct is faster and SOCKS5 often times out);
 /// foreign sites that are blocked/unreachable directly pass `true`.
-fn build_browser(use_proxy: bool) -> Result<Browser> {
+///
+/// Auto-detection: if the target URL matches a known blocked domain, proxy is
+/// used regardless of `use_proxy` flag (the site is unreachable without proxy).
+fn build_browser(use_proxy: bool, url: &str) -> Result<Browser> {
     // Stealth defaults on; disable via AGINXBROWSER_STEALTH=0 (diagnostic / when
     // the wreq stealth client misbehaves on a given site).
     let stealth = !matches!(std::env::var("AGINXBROWSER_STEALTH").ok().as_deref(), Some("0"));
     let mut builder = Browser::builder().stealth(stealth);
-    if use_proxy {
+    if should_auto_proxy(url) || use_proxy {
         if let Ok(proxy) = std::env::var("OBSCURA_PROXY") {
             builder = builder.proxy(&proxy);
         }
@@ -145,7 +188,7 @@ fn fetch_url_text_with_cookies(
     let cookies = cookies.to_vec(); // Clone so the closure owns the data.
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(use_proxy)?;
+            let browser = build_browser(use_proxy, &url)?;
             if !cookies.is_empty() {
                 inject_cookies(&browser, &cookies, &url);
             }
@@ -183,7 +226,7 @@ fn fetch_url_text_with_cookies(
 pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy)?;
+            let browser = build_browser(req.use_proxy, &req.url)?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;
@@ -241,7 +284,7 @@ pub fn do_fetch(req: FetchRequest) -> Result<FetchResponse> {
 pub fn do_click(req: ClickRequest) -> Result<ClickResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy)?;
+            let browser = build_browser(req.use_proxy, &req.url)?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;
@@ -277,7 +320,7 @@ pub fn do_click(req: ClickRequest) -> Result<ClickResponse> {
 pub fn do_eval(req: EvalRequest) -> Result<EvalResponse> {
     run_on_local_runtime(move |_rt| {
         Box::pin(async move {
-            let browser = build_browser(req.use_proxy)?;
+            let browser = build_browser(req.use_proxy, &req.url)?;
             inject_cookies(&browser, &req.cookies, &req.url);
             let mut page = browser.new_page().await?;
             page.goto(&req.url).await?;
