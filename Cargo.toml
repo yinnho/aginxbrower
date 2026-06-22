@@ -21,6 +21,10 @@ async-trait = "0.1"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 
+# --- MCP (Model Context Protocol) ---
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
+schemars = "1"
+
 # --- serialization ---
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

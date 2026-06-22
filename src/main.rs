@@ -12,6 +12,7 @@ mod browser;
 mod config;
 mod cookie;
 mod error;
+mod mcp;
 mod page;
 mod search;
 mod server;
@@ -219,6 +220,14 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    // Check if running in MCP mode
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--mcp".to_string()) {
+        tracing::info!("Starting in MCP mode");
+        mcp::run_mcp_stdio().await.map_err(|e| anyhow::anyhow!("MCP server error: {}", e))?;
+        return Ok(());
+    }
 
     let app = Router::new()
         .route("/health", get(health_handler))

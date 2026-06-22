@@ -6,6 +6,7 @@ use crate::browser::Browser;
 use anyhow::{Context, Result};
 
 /// Error type for /search (separate from anyhow so we can map to 503 vs 500).
+#[derive(Debug)]
 pub enum SearchError {
     /// SearXNG backend unreachable / errored → 503
     BackendUnavailable(String),

@@ -187,7 +187,7 @@ pub async fn native_search(
 
     for handle in handles {
         match handle.await {
-            Ok((name, Ok(results))) => {
+            Ok((_name, Ok(results))) => {
                 total_count += results.len();
                 all_results.extend(results);
             }
