@@ -11,7 +11,7 @@
 - **分层渲染**：静态页面纯 HTTP 直取（~100ms），需要 JS 渲染时才启动浏览器（~1-2s），80% 页面加速
 - **Cloudflare Turnstile 自动绕过**：检测 "Just a moment..." 挑战页，自动等待 `cf_clearance` cookie
 - **TLS 指纹伪装**：stealth 模式模拟 Chrome145/Firefox133/Safari/Edge 指纹，可按请求切换，绕过基于 TLS 指纹的反爬检测
-- **MCP Server**：`--mcp` 模式暴露 fetch/eval/click/search 为 MCP 工具，Claude Desktop/Cursor 直接调用
+- **MCP Server**：`--mcp` 模式暴露 fetch/eval/click/search 为 MCP 工具，Claude Code/Claude Desktop/Cursor 直接调用
 - **Firecrawl 兼容**：`/v1/scrape` 端点，现有 Firecrawl 客户端改 base URL 即可迁移
 
 ## 目录结构
@@ -23,6 +23,9 @@ aginxbrowser/
 ├── js/
 │   └── bootstrap.js      # V8 启动脚本
 ├── README.md
+├── docs/
+│   ├── API.md            # 完整 API 参考（HTTP + MCP）
+│   └── search-design.md  # 搜索引擎设计文档
 └── src/
     ├── main.rs              # HTTP 服务入口与路由
     ├── server.rs            # 业务层（fetch/click/eval/search）
@@ -48,33 +51,6 @@ aginxbrowser/
     └── obscura_browser/     # 页面导航、生命周期、浏览器上下文
 ```
 
-## Features
-
-| Feature | 默认 | 说明 |
-|---------|------|------|
-| `stealth` | 关闭 | TLS/JA3 指纹伪装（依赖 BoringSSL，需 `go` + C++ 工具链） |
-
-## 依赖
-
-- Rust 1.78+
-- 首次编译会自动下载 V8 静态库（需网络，较慢）
-- 启用 `stealth` feature 需额外安装 `go`、`cmake`、C++ 编译器
-- 如需代理下载 V8，设置环境变量：
-  ```bash
-  export OBSCURA_PROXY=socks5://127.0.0.1:8800
-  ```
-
-## 运行时环境变量
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `AGINXBROWSER_BIND` | `0.0.0.0:8089` | 监听地址 |
-| `AGINXBROWSER_STEALTH` | 启用 | `0` 关闭 stealth（诊断用） |
-| `AGINXBROWSER_UA` | Linux Chrome145 | 伪装 UA（stealth 下应设为 macOS Chrome145 保持指纹自洽） |
-| `AGINXBROWSER_ACCEPT_LANGUAGE` | `zh-CN,zh;q=0.9,en;q=0.8` | Accept-Language |
-| `OBSCURA_PROXY` | 无 | 代理地址，`use_proxy:true` 时使用 |
-| `AGINXBROWSER_CACHE_TTL_SECS` | `600` | `/fetch` 缓存 TTL，`0` 禁用 |
-
 ## 构建
 
 ```bash
@@ -85,7 +61,7 @@ cargo build --release
 cargo build --release --features stealth
 ```
 
-release 二进制预计在 70MB 左右。
+依赖：Rust 1.78+，首次编译自动下载 V8 静态库（需网络）。启用 stealth 需额外 `go`、`cmake`、C++ 编译器。
 
 ## 运行
 
@@ -94,379 +70,70 @@ export OBSCURA_PROXY=socks5://127.0.0.1:8800   # 可选
 ./target/release/aginxbrowser
 ```
 
-默认监听 `0.0.0.0:8089`，可通过 `AGINXBROWSER_BIND` 修改：
+默认监听 `0.0.0.0:8089`，可通过 `AGINXBROWSER_BIND` 修改。
+
+## 快速验证
 
 ```bash
-AGINXBROWSER_BIND=0.0.0.0:8090 ./target/release/aginxbrowser
-```
-
-## HTTP API
-
-### GET /health
-
-```bash
+# 健康检查
 curl http://127.0.0.1:8089/health
-```
+# → {"status":"ok","engine":"obscura"}
 
-响应：
+# 抓取页面
+curl -sS -X POST http://127.0.0.1:8089/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
 
-```json
-{"status":"ok","engine":"obscura"}
-```
-
-### POST /fetch
-
-抓取页面并返回内容。
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| url | string | 是 | 目标 URL |
-| format | string | 否 | `markdown` / `html` / `text`，默认 `markdown` |
-| selector | string | 否 | CSS 选择器，仅提取选中区域 |
-| wait_secs | u64 | 否 | 页面加载后额外等待秒数 |
-| use_proxy | bool | 否 | 走 `OBSCURA_PROXY` 代理，默认 `false`（国内站点直连；国外站点设 `true`） |
-| cookies | string[] | 否 | 导航前注入的 cookie（`["name=value", ...]`），用于需登录态的站点 |
-| max_chars | usize | 否 | 截断 `content` 到指定字符数，默认 `50000`，`0` 不限 |
-| auto_bypass_challenge | bool | 否 | 自动检测并绕过 Cloudflare Turnstile 挑战（等 `cf_clearance` cookie），默认 `true` |
-| render_tier | string | 否 | 渲染策略：`auto`（默认，HTTP 优先回退浏览器）/ `http`（强制纯 HTTP）/ `obscura`（强制浏览器） |
-| tls_fingerprint | string | 否 | TLS 指纹（stealth 模式）：`chrome145`/`firefox133`/`safari17_5`/`edge145`，默认 `chrome145` |
-
-响应字段：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| url | string | 最终 URL（重定向后） |
-| title | string? | 页面标题 |
-| content | string | 抓取内容（markdown/html/text） |
-| truncated | bool | `content` 是否被 `max_chars` 截断 |
-
-**缓存**：`/fetch` 有进程内缓存（key 含 url/format/selector/cookies/use_proxy/max_chars/render_tier/tls_fingerprint），TTL 由 `AGINXBROWSER_CACHE_TTL_SECS` 控制（默认 600s，`0` 禁用）。重复抓取同一 URL 命中缓存（~0.01s vs 首次 ~1s）。
-
-**分层渲染**：默认 `render_tier:"auto"`，先尝试纯 HTTP 直取（`ObscuraHttpClient`，~100ms），内容不足时（SPA 壳、反爬重定向、非 200）自动回退到 obscura 浏览器渲染（~1-2s）。静态页面 80% 命中 Tier 1，显著加速。
-
-示例：
-
-```bash
-cat <<EOF | curl -sS -X POST http://127.0.0.1:8089/fetch \
-  -H "Content-Type: application/json" -d @-
-{"url":"https://github.com/trending","format":"text","selector":"article","use_proxy":true}
-EOF
-```
-
-响应：
-
-```json
-{
-  "url": "https://github.com/trending",
-  "title": "Trending  repositories on GitHub today · GitHub",
-  "content": "...",
-  "truncated": false
-}
-```
-
-**安全**：内置 SSRF 防护（`validate_url` 拦截非 http(s/file) scheme、私网/loopback IP），robots.txt、tracker 拦截（stealth 模式）。
-
-### POST /click
-
-使用 JS `element.click()` 点击指定元素。
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| url | string | 是 | 目标 URL |
-| selector | string | 是 | CSS 选择器 |
-| wait_secs | u64 | 否 | 页面加载后额外等待秒数 |
-| use_proxy | bool | 否 | 走 `OBSCURA_PROXY` 代理，默认 `false` |
-| cookies | string[] | 否 | 导航前注入的 cookie |
-
-示例：
-
-```bash
-cat <<EOF | curl -sS -X POST http://127.0.0.1:8089/click \
-  -H "Content-Type: application/json" -d @-
-{"url":"https://github.com/trending","selector":"article:first-of-type h2 a"}
-EOF
-```
-
-响应：
-
-```json
-{
-  "url": "https://github.com/trending/",
-  "selector": "article:first-of-type h2 a",
-  "clicked": true,
-  "text_after": "..."
-}
-```
-
-### POST /eval
-
-在页面上执行任意 JavaScript 并返回结果。
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| url | string | 是 | 目标 URL |
-| script | string | 是 | JS 表达式或 async IIFE（支持 awaitPromise，可等动态渲染） |
-| wait_secs | u64 | 否 | 页面加载后额外等待秒数 |
-| use_proxy | bool | 否 | 走 `OBSCURA_PROXY` 代理，默认 `false` |
-| cookies | string[] | 否 | 导航前注入的 cookie |
-
-> `/eval` 支持 **async 脚本**（返回 Promise 会被 await），适合抓取 React/Vue 等动态渲染页面：`script: "(async()=>{await new Promise(r=>setTimeout(r,3000));return document.body.innerText})()"`。
-
-示例：
-
-```bash
-cat <<EOF | curl -sS -X POST http://127.0.0.1:8089/eval \
-  -H "Content-Type: application/json" -d @-
-{"url":"https://example.com","script":"document.title"}
-EOF
-```
-
-响应：
-
-```json
-{
-  "url": "https://example.com/",
-  "result": "Example Domain"
-}
-```
-
-### POST /search
-
-原生聚合搜索 + 可选自动抓正文。Agent 一步完成"搜→读"。
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| q | string | 是 | 搜索关键词 |
-| fetch_top | usize | 否 | 对前 N 条结果抓正文，默认 `0`（只返回 title/url/snippet，毫秒级） |
-| categories | string | 否 | 搜索分类，默认 `general` |
-| language | string | 否 | 语言，默认 `zh-CN` |
-| max_results | usize | 否 | 返回结果上限，默认 `10` |
-| max_chars_per | usize | 否 | 每条正文字符截断，默认 `4000`，`0` 不限 |
-| wait_secs | u64 | 否 | 抓正文时每页 JS 渲染等待秒数，默认 `3` |
-| use_proxy | bool | 否 | 抓正文时是否走代理（国外站），默认 `false` |
-
-#### 搜索引擎
-
-内置 5 个搜索引擎，并发查询、合并去重：
-
-| 引擎 | 分类 | HTTP 客户端 | 说明 |
-|------|------|------------|------|
-| Baidu | general | wreq stealth | 百度 JSON API，中国最常用 |
-| Bing | general | plain reqwest | Bing HTML 解析，稳定可靠 |
-| Sogou | general | plain reqwest | 搜狗通用搜索 |
-| Sogou WeChat | general, news | plain reqwest | 搜狗微信搜索 |
-| Google | general | wreq stealth + proxy | Google HTML 解析，国内需代理 |
-
-- **合并去重**：多引擎返回的同一 URL（归一化后）合并为一条结果，`engines` 字段列出所有来源引擎，`score` 累加
-- **CAPTCHA 暂停**：引擎触发验证码后自动暂停（搜狗微信 60 分钟，其他 30 分钟），不影响其他引擎
-- **stealth 优势**：wreq 使用 BoringSSL 模拟 Chrome145 TLS 指纹，绕过基于 TLS 指纹的反爬检测
-
-示例（纯搜索，快）：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/search \
+# 搜索
+curl -sS -X POST http://127.0.0.1:8089/search \
   -H "Content-Type: application/json" \
   -d '{"q":"macbook 价格","max_results":5}'
-```
 
-示例（搜索 + 抓前 3 条正文，一步到位）：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/search \
-  -H "Content-Type: application/json" \
-  -d '{"q":"macbook 价格","fetch_top":3,"max_chars_per":2000}'
-```
-
-响应：
-
-```json
-{
-  "query": "macbook 价格",
-  "number_of_results": 1000,
-  "results": [
-    {
-      "title": "MacBook Air - Apple",
-      "url": "https://www.apple.com/mac/",
-      "snippet": "...(搜索摘要)...",
-      "engines": ["bing", "baidu"],
-      "score": 8.5,
-      "content": "...(正文,仅 index<fetch_top 才有,否则 null)...",
-      "content_truncated": false,
-      "fetch_error": null
-    }
-  ],
-  "search_backend": "native"
-}
-```
-
-- `fetch_top=0`：纯搜索，毫秒级
-- `fetch_top>0`：前 N 条并发抓正文（复用 `/fetch` 的 stealth + JS 渲染），单条失败不影响其他（`fetch_error` 标记）
-
-> 设计细节见 [`docs/search-design.md`](docs/search-design.md)。
-
-### POST /v1/scrape（Firecrawl 兼容）
-
-[Firecrawl](https://github.com/mendableai/firecrawl) 兼容端点。现有 Firecrawl 客户端只需改 base URL 即可迁移到 AginxBrowser。
-
-请求字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| url | string | 是 | 目标 URL |
-| formats | string[] | 否 | 输出格式 `["markdown"]`（默认）/`["html"]`/`["markdown","html"]` |
-| onlyMainContent | bool | 否 | 仅主内容（接受，暂未实现） |
-| waitFor | u64 | 否 | 等待 JS 渲染毫秒数 |
-| timeout | u32 | 否 | 超时（毫秒） |
-| actions | object[] | 否 | 抓取前动作：`{"type":"click","selector":"..."}`/`{"type":"wait","milliseconds":1000}` |
-| selector | string | 否 | CSS 选择器 |
-| tls_fingerprint | string | 否 | TLS 指纹（stealth 模式） |
-
-示例：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/v1/scrape -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com","formats":["markdown","html"]}'
-```
-
-响应（Firecrawl 格式，成功/失败均返回 HTTP 200，用 `success` 字段区分）：
-
-```json
-{
-  "success": true,
-  "data": {
-    "markdown": "...",
-    "html": "...",
-    "metadata": {
-      "title": "Example Domain",
-      "sourceURL": "https://example.com/",
-      "statusCode": 200
-    }
-  }
-}
-```
-
-## MCP Server
-
-`--mcp` 模式将 AginxBrowser 包装为 MCP（Model Context Protocol）Server，Claude Desktop、Cursor 等 AI Agent 可直接调用，无需 HTTP 客户端。
-
-```bash
+# MCP 模式
 ./target/release/aginxbrowser --mcp
 ```
 
-暴露 4 个工具，参数与 `/fetch`、`/eval`、`/click`、`/search` 端点一致：
+## API 文档
 
-| 工具 | 说明 |
-|------|------|
-| `fetch` | 抓取页面（支持 `render_tier`、`tls_fingerprint`、`auto_bypass_challenge`） |
-| `eval` | 执行 JS |
-| `click` | 点击元素 |
-| `search` | 多引擎搜索 |
+**完整 API 参考** → [`docs/API.md`](docs/API.md)
 
-Claude Desktop 配置（`claude_desktop_config.json`）：
+包含：
+- 所有 HTTP 端点的完整参数表 + 请求/响应示例（`/fetch`、`/click`、`/eval`、`/search`、`/v1/scrape`）
+- MCP Server 的 4 个工具及参数
+- **Claude Code** / **Claude Desktop** / **Cursor** 客户端配置
+- 远程服务器 SSH 接入方式
+- 环境变量、错误码、站点抓取示例
 
-```json
-{
-  "mcpServers": {
-    "aginxbrowser": {
-      "command": "/path/to/aginxbrowser",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
+## Features
 
-## 错误处理
+| Feature | 默认 | 说明 |
+|---------|------|------|
+| `stealth` | 关闭 | TLS/JA3 指纹伪装（依赖 BoringSSL，需 `go` + C++ 工具链） |
 
-API 返回不同 HTTP 状态码区分错误类型：
+## 运行时环境变量
 
-| 状态码 | 场景 |
-|--------|------|
-| 400 | CSS 选择器语法错误 |
-| 404 | 元素未找到 |
-| 502 | 目标网站不可达（DNS/连接失败） |
-| 504 | 请求超时 |
-| 500 | 其他内部错误 |
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `AGINXBROWSER_BIND` | `0.0.0.0:8089` | 监听地址 |
+| `AGINXBROWSER_STEALTH` | 启用 | `0` 关闭 stealth（诊断用） |
+| `AGINXBROWSER_UA` | Linux Chrome145 | 伪装 UA |
+| `AGINXBROWSER_ACCEPT_LANGUAGE` | `zh-CN,zh;q=0.9,en;q=0.8` | Accept-Language |
+| `OBSCURA_PROXY` | 无 | 代理地址，`use_proxy:true` 时使用 |
+| `AGINXBROWSER_CACHE_TTL_SECS` | `600` | `/fetch` 缓存 TTL，`0` 禁用 |
 
-## 作为外挂接入其他系统（以 OpenCarrier 为例）
+## 作为外挂接入其他系统
 
 AginxBrowser 定位是**纯外挂基础设施**——像真实浏览器一样作为独立服务挂在系统里，谁需要谁调用，不嵌入宿主代码、不污染宿主配置。同机部署一个实例（systemd 守护），所有需要"渲染 + 抓取"能力的应用共享它。
 
-**OpenCarrier 的接入方式**：OpenCarrier 的内置 `web_fetch` 工具默认走 reqwest 直连，但微信公众号、知乎专栏等风控/JS 渲染页面只能拿到空壳。OpenCarrier 不把 AginxBrowser 写进自己的配置体系，而是读一个环境变量：
-
-```bash
-export AGINXBROWSER_URL=http://127.0.0.1:8089
-```
-
-- **未设** → `web_fetch` 纯 reqwest，行为完全不变（可随时回退）
-- **设了** → `web_fetch` 内部识别到已知风控站时，调 AginxBrowser 的 `/fetch` 渲染抓取；失败自动回退 reqwest，不报错
-
-宿主侧零新增配置字段、Agent 侧零接口变化——AginxBrowser 是一个环境变量挂上去的"浏览器外挂"。OpenCarrier 同时提供独立的 `browser_*` 工具集（`browser_navigate`/`browser_evaluate`/`browser_click`），给需要点击/滚动/执行 JS 的交互场景显式调用。
-
-## 站点抓取示例
-
-`examples/` 下提供了针对不同风控类型站点的抓取脚本。
-
-### 动态渲染页面（GitHub Trending 等）
-
-JS 异步渲染的内容用 `/eval` 的 **async 脚本**（`evaluate_async` 支持 awaitPromise），等渲染完再提取：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/eval -H 'Content-Type: application/json' -d '{
-  "url": "https://github.com/trending",
-  "script": "(async()=>{await new Promise(r=>setTimeout(r,4000));return Array.from(document.querySelectorAll(\"article.Box-row\")).slice(0,5).map(a=>a.querySelector(\"h2 a\")?.textContent?.trim())})()",
-  "use_proxy": true
-}'
-```
-
-### 微信公众号文章（公开，无需登录）
-
-stealth 模式可直接抓取，**不需要 cookie**：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/eval -H 'Content-Type: application/json' -d '{
-  "url": "https://mp.weixin.qq.com/s/xxxxx",
-  "script": "({title:document.querySelector(\"#activity-name\")?.textContent?.trim(), body:document.querySelector(\"#js_content\")?.innerText})"
-}'
-```
-
-通过 `/search` 搜索微信文章并自动抓正文（一步完成"搜→读"）：
-
-```bash
-curl -s -X POST http://127.0.0.1:8089/search -H 'Content-Type: application/json' \
-  -d '{"q":"AI人工智能","categories":"news","fetch_top":3,"max_chars_per":2000}'
-```
-
-### 知乎专栏（需 cookie）
-
-知乎专栏是公开内容（无需登录），但需要提供有效 cookie 才能访问：
-
-```bash
-./examples/zhihu.sh "<文章URL>" "<cookie值>"
-```
+接入方式：读环境变量 `AGINXBROWSER_URL=http://127.0.0.1:8089`。未设 → 行为不变；设了 → 风控站自动调 AginxBrowser 渲染抓取，失败自动回退。
 
 ## 已知限制
 
-1. **无法截图**：没有 layout/paint 引擎，不支持截图。
-2. **无元素坐标**：只能做 JS click，不能做基于屏幕坐标的点击。
-3. **JS 复杂组件可能失败**：React/Vue 等框架的事件委托可能不响应原生 `click()`，需要针对具体站点写 JS。
-4. **代理支持**：支持 HTTP/HTTPS/SOCKS5 代理，通过 `OBSCURA_PROXY` 传入；国内站点默认直连（`use_proxy:false`），国外站点请求时传 `use_proxy:true`。
-5. **强风控站点**：百度文库（安全验证 + 正文图片化）暂不支持；知乎专栏需提供有效 `__zse_ck`。
-
-## 后续优化方向
-
-1. 增加 `POST /session` 会话保持，复用浏览器实例，减少启动开销。
-2. 增加 `POST /form`：自动填充 input 并 submit。
-3. 增加失败重试 + 超时细粒度控制。
-4. Firefox 后端（Camoufox + CDP 适配），Chrome 指纹检测不过的站点尝试 Firefox。
-5. 暴露 Prometheus /healthz 等运维端点。
+1. **无法截图**：没有 layout/paint 引擎
+2. **无元素坐标**：只能做 JS click，不能做基于屏幕坐标的点击
+3. **JS 复杂组件可能失败**：React/Vue 事件委托可能不响应原生 `click()`
+4. **代理支持**：HTTP/HTTPS/SOCKS5，通过 `OBSCURA_PROXY` 传入
+5. **强风控站点**：百度文库暂不支持；知乎专栏需有效 `__zse_ck`
 
 ## 与 Chromium 对比
 
