@@ -58,7 +58,7 @@ impl SearchEngine for SogouEngine {
             if let Some(location) = resp.headers().get("location") {
                 let loc = location.to_str().unwrap_or("");
                 if loc.contains("/antispider") {
-                    return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+                    return Err(SearchEngineError::Captcha);
                 }
             }
             return Err(SearchEngineError::Transient(format!("redirect: {}", resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("?"))));
@@ -73,7 +73,7 @@ impl SearchEngine for SogouEngine {
         // Check for CAPTCHA indicators in the HTML body.
         if html.contains("/antispider") || html.contains("用户频率限制") {
             tracing::warn!("sogou: CAPTCHA detected in HTML body (len={})", html.len());
-            return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+            return Err(SearchEngineError::Captcha);
         }
 
         parse_sogou_html(&html)

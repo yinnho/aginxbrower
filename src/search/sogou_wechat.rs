@@ -86,7 +86,7 @@ async fn reqwest_search_and_resolve(
         }
     }
     let cookie_header = cookies.join("; ");
-    tracing::info!("sogou_wechat: reqwest search cookies: '{}' len={}", cookie_header, cookie_header.len());
+    tracing::debug!("sogou_wechat: reqwest search cookies: '{}' len={}", cookie_header, cookie_header.len());
 
     let html = match resp.text().await {
         Ok(t) => t,
@@ -99,9 +99,7 @@ async fn reqwest_search_and_resolve(
     // Check for CAPTCHA.
     if html.contains("antispider") || html.contains("用户频率限制") {
         tracing::warn!("sogou_wechat: reqwest search hit CAPTCHA");
-        return Err(SearchEngineError::Captcha {
-            suspend_secs: 3600,
-        });
+        return Err(SearchEngineError::Captcha);
     }
 
     // Step 2: Parse search results.
@@ -142,7 +140,7 @@ async fn reqwest_search_and_resolve(
                         if loc.contains("/antispider") {
                             tracing::debug!("sogou_wechat: /link hit antispider");
                         } else if loc.contains("mp.weixin.qq.com") {
-                            tracing::info!("sogou_wechat: resolved {} -> {}", result.url, loc);
+                            tracing::debug!("sogou_wechat: resolved {} -> {}", result.url, loc);
                             result.url = loc.to_string();
                         } else if loc.starts_with("http") {
                             // Follow one more hop.
@@ -154,7 +152,7 @@ async fn reqwest_search_and_resolve(
                                     if let Some(loc2) = next.headers().get("location") {
                                         let loc2_str = loc2.to_str().unwrap_or("");
                                         if loc2_str.contains("mp.weixin.qq.com") {
-                                            tracing::info!("sogou_wechat: resolved {} -> {}", result.url, loc2_str);
+                                            tracing::debug!("sogou_wechat: resolved {} -> {}", result.url, loc2_str);
                                             result.url = loc2_str.to_string();
                                         }
                                     }
@@ -166,7 +164,7 @@ async fn reqwest_search_and_resolve(
                     // 200 with HTML — might contain meta/JS redirect.
                     if let Ok(body) = resp.text().await {
                         if let Some(real_url) = extract_weixin_url_from_html(&body) {
-                            tracing::info!("sogou_wechat: resolved (200) {} -> {}", result.url, real_url);
+                            tracing::debug!("sogou_wechat: resolved (200) {} -> {}", result.url, real_url);
                             result.url = real_url;
                         }
                     }

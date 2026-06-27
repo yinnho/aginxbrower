@@ -43,8 +43,9 @@ pub struct RawSearchResult {
 /// Error from a single engine.
 #[derive(Debug)]
 pub enum SearchEngineError {
-    /// Engine hit a CAPTCHA; should be suspended.
-    Captcha { suspend_secs: u64 },
+    /// Engine hit a CAPTCHA; should be suspended. Duration is decided by the
+    /// registry's progressive backoff, not the engine itself.
+    Captcha,
     /// Network / parse error; transient, do not suspend.
     Transient(String),
     /// Engine is currently suspended (skipped).
@@ -77,6 +78,18 @@ pub struct SearchEngineRegistry {
     engines: Vec<Arc<dyn SearchEngine>>,
     /// Engines suspended due to CAPTCHA. Key = engine name, Value = resume time.
     suspended: Arc<RwLock<HashMap<String, std::time::Instant>>>,
+    /// Consecutive CAPTCHA count per engine. Reset on success.
+    captcha_counts: Arc<RwLock<HashMap<String, u32>>>,
+}
+
+/// Progressive backoff: first CAPTCHA → 5 min, then 10 min, 30 min, 1 h.
+fn captcha_backoff(count: u32) -> Duration {
+    match count {
+        0..=1 => Duration::from_secs(300),
+        2 => Duration::from_secs(600),
+        3 => Duration::from_secs(1800),
+        _ => Duration::from_secs(3600),
+    }
 }
 
 impl SearchEngineRegistry {
@@ -84,6 +97,7 @@ impl SearchEngineRegistry {
         let mut registry = SearchEngineRegistry {
             engines: Vec::new(),
             suspended: Arc::new(RwLock::new(HashMap::new())),
+            captcha_counts: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Register engines. Each engine internally decides whether to use
@@ -114,11 +128,24 @@ impl SearchEngineRegistry {
         false
     }
 
-    /// Mark an engine as suspended for the given duration.
-    async fn suspend_engine(&self, name: &str, duration: Duration) {
+    /// Suspend an engine after CAPTCHA, using progressive backoff.
+    async fn suspend_engine(&self, name: &str) {
+        let count = {
+            let mut counts = self.captcha_counts.write().await;
+            let c = counts.entry(name.to_string()).or_insert(0);
+            *c += 1;
+            *c
+        };
+        let duration = captcha_backoff(count);
         let resume_at = std::time::Instant::now() + duration;
         self.suspended.write().await.insert(name.to_string(), resume_at);
-        tracing::warn!("search: engine {} suspended for {:?}", name, duration);
+        tracing::warn!("search: engine {} suspended for {:?} (CAPTCHA #{})", name, duration, count);
+    }
+
+    /// Reset CAPTCHA count for an engine after a successful search.
+    async fn reset_captcha_count(&self, name: &str) {
+        let mut counts = self.captcha_counts.write().await;
+        counts.remove(name);
     }
 
     /// Clean up expired suspensions.
@@ -188,14 +215,13 @@ pub async fn native_search(
 
     for handle in handles {
         match handle.await {
-            Ok((_name, Ok(results))) => {
+            Ok((name, Ok(results))) => {
                 total_count += results.len();
                 all_results.extend(results);
+                registry.reset_captcha_count(&name).await;
             }
-            Ok((name, Err(SearchEngineError::Captcha { suspend_secs }))) => {
-                registry
-                    .suspend_engine(&name, Duration::from_secs(suspend_secs))
-                    .await;
+            Ok((name, Err(SearchEngineError::Captcha))) => {
+                registry.suspend_engine(&name).await;
             }
             Ok((name, Err(SearchEngineError::Transient(msg)))) => {
                 tracing::warn!("search: engine {} transient error: {}", name, msg);
@@ -435,7 +461,7 @@ pub async fn stealth_fetch(
     // follows redirects internally; redirected_from holds the *source* URLs
     // and resp.url is the final destination.
     let final_url = resp.url.as_str();
-    tracing::info!(
+    tracing::debug!(
         "stealth_fetch: {} -> final={} redirects={:?} status={}",
         url, final_url,
         resp.redirected_from.iter().map(|u| u.as_str()).collect::<Vec<_>>(),
@@ -445,7 +471,7 @@ pub async fn stealth_fetch(
         || final_url.contains("wappass.baidu.com")
         || final_url.contains("sorry.google.com")
     {
-        return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+        return Err(SearchEngineError::Captcha);
     }
     for redirected in &resp.redirected_from {
         let next = redirected.as_str();
@@ -453,7 +479,7 @@ pub async fn stealth_fetch(
             || next.contains("wappass.baidu.com")
             || next.contains("sorry.google.com")
         {
-            return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+            return Err(SearchEngineError::Captcha);
         }
     }
 
@@ -484,7 +510,7 @@ pub async fn plain_fetch(client: &reqwest::Client, url: &str) -> Result<String, 
                     || loc.contains("wappass.baidu.com")
                     || loc.contains("sorry.google.com")
                 {
-                    return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+                    return Err(SearchEngineError::Captcha);
                 }
                 // Normal redirect — follow it.
                 current_url = if loc.starts_with("http") {

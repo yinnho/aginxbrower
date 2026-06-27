@@ -87,7 +87,7 @@ impl SearchEngine for GoogleEngine {
             if let Some(location) = resp.headers().get("location") {
                 let loc = location.to_str().unwrap_or("");
                 if loc.contains("sorry.google.com") || loc.contains("/sorry/") {
-                    return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+                    return Err(SearchEngineError::Captcha);
                 }
             }
             return Err(SearchEngineError::Transient(format!("redirect: {}", resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("?"))));
@@ -98,7 +98,7 @@ impl SearchEngine for GoogleEngine {
 
         // Check for CAPTCHA in body
         if html.contains("/sorry/") || html.contains("unusual traffic") {
-            return Err(SearchEngineError::Captcha { suspend_secs: 1800 });
+            return Err(SearchEngineError::Captcha);
         }
 
         parse_google_html(&html)
